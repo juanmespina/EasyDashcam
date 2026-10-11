@@ -147,43 +147,42 @@ class GpsocketClient(
         buf.putShort(v.toShort())
     }
 
-    private suspend fun writeBare(cmd: Int) {
+    /** Blocking network write, always on the IO dispatcher, mutex-serialized. */
+    private suspend fun rawWrite(bytes: ByteArray) {
         writeLock.withLock {
-            val out = output ?: return
-            val frame = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN)
-            frame.put(MAGIC)
-            putU16(frame, TYPE_REQUEST)
-            putU16(frame, cmd)
-            out.write(frame.array())
-            out.flush()
+            withContext(Dispatchers.IO) {
+                val out = output ?: return@withContext
+                out.write(bytes)
+                out.flush()
+            }
         }
+    }
+
+    private suspend fun writeBare(cmd: Int) {
+        val frame = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN)
+        frame.put(MAGIC)
+        putU16(frame, TYPE_REQUEST)
+        putU16(frame, cmd)
+        rawWrite(frame.array())
     }
 
     private suspend fun writeArgs(cmd: Int, args: ByteArray) {
-        writeLock.withLock {
-            val out = output ?: return
-            val frame = ByteBuffer.allocate(12 + args.size).order(ByteOrder.LITTLE_ENDIAN)
-            frame.put(MAGIC)
-            putU16(frame, TYPE_REQUEST)
-            putU16(frame, cmd)
-            frame.put(args)
-            out.write(frame.array())
-            out.flush()
-        }
+        val frame = ByteBuffer.allocate(12 + args.size).order(ByteOrder.LITTLE_ENDIAN)
+        frame.put(MAGIC)
+        putU16(frame, TYPE_REQUEST)
+        putU16(frame, cmd)
+        frame.put(args)
+        rawWrite(frame.array())
     }
 
     private suspend fun writePayload(cmd: Int, payload: ByteArray) {
-        writeLock.withLock {
-            val out = output ?: return
-            val frame = ByteBuffer.allocate(14 + payload.size).order(ByteOrder.LITTLE_ENDIAN)
-            frame.put(MAGIC)
-            putU16(frame, TYPE_REQUEST)
-            putU16(frame, cmd)
-            putU16(frame, payload.size)
-            frame.put(payload)
-            out.write(frame.array())
-            out.flush()
-        }
+        val frame = ByteBuffer.allocate(14 + payload.size).order(ByteOrder.LITTLE_ENDIAN)
+        frame.put(MAGIC)
+        putU16(frame, TYPE_REQUEST)
+        putU16(frame, cmd)
+        putU16(frame, payload.size)
+        frame.put(payload)
+        rawWrite(frame.array())
     }
 
     // ---- Public commands -----------------------------------------------------
