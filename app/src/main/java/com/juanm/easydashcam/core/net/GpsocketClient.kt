@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
@@ -98,16 +99,18 @@ class GpsocketClient(
         ) return
         _state.emit(State.Connecting)
         try {
-            val s = Socket()
-            s.tcpNoDelay = true
-            s.soTimeout = 0
-            s.connect(InetSocketAddress(host, port), 5000)
-            socket = s
-            input = BufferedInputStream(s.getInputStream(), 65536)
-            output = BufferedOutputStream(s.getOutputStream(), 8192)
+            withContext(Dispatchers.IO) {
+                val s = Socket()
+                s.tcpNoDelay = true
+                s.soTimeout = 0
+                s.connect(InetSocketAddress(host, port), 5000)
+                socket = s
+                input = BufferedInputStream(s.getInputStream(), 65536)
+                output = BufferedOutputStream(s.getOutputStream(), 8192)
 
-            startReadLoop()
-            runInitSequence()
+                startReadLoop()
+                runInitSequence()
+            }
             startHeartbeat()
             _state.emit(State.Connected)
         } catch (t: Throwable) {
