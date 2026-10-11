@@ -51,6 +51,13 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         binder.unbind()
     }
 
+    /** Send a raw GPSOCKET command live, to map protocol semantics by observation. */
+    fun probe(cmd: Int, args: ByteArray = byteArrayOf()) {
+        val argHex = args.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+        _frameLog.update { (it + "\u2192 TX cmd=0x%04x $argHex".format(cmd)).takeLast(60) }
+        viewModelScope.launch { client.sendRaw(cmd, args) }
+    }
+
     override fun onCleared() {
         client.disconnect()
         binder.unbind()

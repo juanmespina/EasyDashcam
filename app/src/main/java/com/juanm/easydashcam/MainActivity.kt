@@ -45,7 +45,8 @@ class MainActivity : ComponentActivity() {
                     state = state,
                     frameLog = log,
                     onConnect = vm::connect,
-                    onDisconnect = vm::disconnect
+                    onDisconnect = vm::disconnect,
+                    onProbe = vm::probe
                 )
             }
         }
@@ -58,7 +59,8 @@ fun HomeScreen(
     state: GpsocketClient.State,
     frameLog: List<String>,
     onConnect: () -> Unit,
-    onDisconnect: () -> Unit
+    onDisconnect: () -> Unit,
+    onProbe: (Int, ByteArray) -> Unit
 ) {
     Scaffold(
         topBar = { TopAppBar(title = { Text("Easy Dashcam") }) }
@@ -87,7 +89,20 @@ fun HomeScreen(
                     Text("Disconnect")
                 }
             }
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val probing = state is GpsocketClient.State.Connected
+                OutlinedButton(onClick = { onProbe(0x0300, byteArrayOf()) }, enabled = probing) {
+                    Text("Probe 0x0300")
+                }
+                OutlinedButton(onClick = { onProbe(0x0603, byteArrayOf(0x41)) }, enabled = probing) {
+                    Text("Probe 0x0603+41")
+                }
+                OutlinedButton(onClick = { onProbe(0x0305, byteArrayOf()) }, enabled = probing) {
+                    Text("Probe 0x0305")
+                }
+            }
+            Spacer(Modifier.height(16.dp))
             Text("Camera frames (debug)", style = MaterialTheme.typography.labelLarge)
             Spacer(Modifier.height(8.dp))
             LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {

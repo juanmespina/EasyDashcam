@@ -1,5 +1,6 @@
 package com.juanm.easydashcam.core.net
 
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -49,17 +50,24 @@ class GpsocketClient(
         // Outgoing frame type
         const val TYPE_REQUEST = 1
 
-        // Command ids seen on the wire (payloads documented where known)
-        const val CMD_KEEPALIVE = 0x0001      // bare, sent constantly by Viidure
+        // Command ids. NOTE: partly byte-swapped in earlier revision; verified
+        // against Viidure pcaps: only 0x0500/0x00ff/0x0303 survive symmetric.
         const val CMD_LOGIN = 0x0500          // + u32 random token
-        const val CMD_PARAM_QUERY = 0x0004    // + u32 param id, e.g. 0x9002/0x9003/0x9004/0x9009/0x0300
-        const val CMD_PRE_TIMESYNC = 0x0002   // bare, sent right before time sync
+        const val CMD_PARAM_QUERY = 0x0004    // + u32 param id, answers carry the VALUE
+        const val CMD_KEEPALIVE = 0x0100      // bare, Viidure sends this constantly
+        const val CMD_PRE_TIMESYNC = 0x0200   // bare, sent right before time sync
         const val CMD_TIMESYNC = 0x00FF       // len=17, "GPVENDOR\0\0" + datetime
         const val CMD_STATUS_FLAGS = 0x0000   // + u8 flag byte (0x00/0x02/0x03 seen)
-        const val CMD_UNKNOWN_8 = 0x0008      // + u8 0x00
-        const val CMD_UNKNOWN_100 = 0x0100    // bare
-        const val CMD_UNKNOWN_302 = 0x0302    // bare
+        const val CMD_UNKNOWN_800 = 0x0800    // + u8 0x00
+        const val CMD_UNKNOWN_001 = 0x0001    // bare
+        const val CMD_UNKNOWN_203 = 0x0203    // bare
         const val CMD_HEARTBEAT = 0x0303      // status exchange; camera replies 209-byte blob
+        // File-operation suspects from pcaps (to pin down via live probing):
+        const val CMD_PROBE_300 = 0x0300      // phone sent with u16 args 0x1247/0xe352
+        const val CMD_PROBE_603 = 0x0603      // phone sent with 1-byte arg 0x41 before transfer
+        const val CMD_PROBE_305 = 0x0305      // phone echoed; cam uses same cmd for 32KB data chunks
+        const val CMD_BULK_404 = 0x0403       // cam TYPE=3 65,528B frame opening a file transfer
+        const val CMD_FLOW_304 = 0x0304       // phone ack pairs counting down during transfer
 
         private val INIT_PARAM_IDS = intArrayOf(0x9002, 0x9003, 0x9004, 0x9009, 0x0300, 0x9006)
     }
@@ -207,6 +215,12 @@ class GpsocketClient(
 
     suspend fun sendHeartbeatStatusQuery() = writeBare(CMD_HEARTBEAT)
 
+    /** Live-probing API: send a bare command or command+inline-args. */
+    suspend fun sendRaw(cmd: Int, args: ByteArray = byteArrayOf()) {
+        Log.d("GPSOCKET", "TX probe cmd=0x%04x args=%s".format(cmd, args.joinToString("") { "%02x".format(it.toInt() and 0xFF) }))
+        if (args.isEmpty()) writeBare(cmd) else writeArgs(cmd, args)
+    }
+
     // ---- Session lifecycle -------------------------------------------------
 
     private suspend fun runInitSequence() {
@@ -216,11 +230,11 @@ class GpsocketClient(
         sendTimeSync()
         writeBare(CMD_KEEPALIVE)
         writeArgs(CMD_STATUS_FLAGS, byteArrayOf(0x00))
-        writeArgs(CMD_UNKNOWN_8, byteArrayOf(0x00))
+        writeArgs(CMD_UNKNOWN_800, byteArrayOf(0x00))
         writeBare(CMD_PARAM_QUERY)
-        writeBare(CMD_UNKNOWN_100)
+        writeBare(CMD_UNKNOWN_001)
         writeArgs(CMD_STATUS_FLAGS, byteArrayOf(0x02))
-        writeBare(CMD_UNKNOWN_302)
+        writeBare(CMD_UNKNOWN_203)
     }
 
     private fun startHeartbeat() {
@@ -282,7 +296,10 @@ class GpsocketClient(
                 buf.write(data, idx, data.size - idx)
                 return
             }
-            _frames.emit(Frame(type, cmd, data.copyOfRange(idx + 14, idx + 14 + len)))
+            val frame = Frame(type, cmd, data.copyOfRange(idx + 14, idx + 14 + len))
+            _frames.emit(frame)
+            Log.d("GPSOCKET", "RX cmd=0x%04x type=%d len=%d %s".format(cmd, type, len,
+                frame.payload.joinToString("") { "%02x".format(it.toInt() and 0xFF) }))
             pos = idx + 14 + len
         }
         buf.reset()
