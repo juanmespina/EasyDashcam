@@ -74,7 +74,7 @@ fun HomeScreen(
                     is GpsocketClient.State.Connected -> "Connected to camera"
                     is GpsocketClient.State.Connecting -> "Connecting…"
                     is GpsocketClient.State.Disconnected -> "Not connected — join the camera Wi-Fi hotspot first"
-                    is GpsocketClient.State.Error -> "Error: ${state.cause.message}"
+                    is GpsocketClient.State.Error -> "Error: ${state.cause.message ?: state.cause.javaClass.simpleName}"
                 },
                 style = MaterialTheme.typography.titleMedium
             )
