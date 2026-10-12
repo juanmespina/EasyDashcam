@@ -14,7 +14,10 @@ class CameraNetworkBinder(context: Context) {
     private val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
     /** Bind app sockets to the Wi-Fi network. False if no Wi-Fi network exists. */
+    @Suppress("DEPRECATION")
     fun bindToWifi(): Boolean {
+        // allNetworks is deprecated (API 31+) but the callback-tracking
+        // replacement is more machinery than this one-shot lookup needs.
         val wifi = cm.allNetworks.firstOrNull { n ->
             cm.getNetworkCapabilities(n)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
         } ?: return false
