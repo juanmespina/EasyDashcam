@@ -1,5 +1,8 @@
 package com.juanm.easydashcam.ui.components
 
+import android.content.Intent
+import android.os.Build
+import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -8,10 +11,12 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.juanm.easydashcam.core.net.GpsocketClient
@@ -54,7 +59,16 @@ fun ConnectionGate(
                 )
                 when (state) {
                     is GpsocketClient.State.Connecting -> CircularProgressIndicator()
-                    else -> Button(onClick = onConnect) { Text("Connect") }
+                    else -> {
+                        val context = LocalContext.current
+                        Button(onClick = onConnect) { Text("Connect") }
+                        OutlinedButton(onClick = {
+                            // The system Wi-Fi panel (29+) doesn't leave the app.
+                            val action = if (Build.VERSION.SDK_INT >= 29)
+                                Settings.Panel.ACTION_WIFI else Settings.ACTION_WIFI_SETTINGS
+                            context.startActivity(Intent(action))
+                        }) { Text("Open Wi-Fi settings") }
+                    }
                 }
             }
         }
