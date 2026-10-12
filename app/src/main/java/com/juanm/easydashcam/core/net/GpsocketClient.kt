@@ -66,6 +66,7 @@ class GpsocketClient(
         const val CMD_SESSION_800 = 0x0800    // + u8 0x00 session step
 
         const val MODE_IDLE = 0x00
+        const val MODE_PREVIEW = 0x01     // hypothesis: enables the RTSP media push
         const val MODE_FILE_LIST = 0x02
         const val MODE_SETTINGS = 0x03
         const val CMD_FILE_COUNT = 0x0203     // bare; RX u16 total record count
@@ -273,6 +274,13 @@ class GpsocketClient(
         delay(50)   // ack comes in ~10 ms; give the camera time to switch
     }
 
+    /** Put the camera into preview mode so it starts pushing RTP media on the
+     *  RTSP session. In the Viidure pcaps the camera answers RTSP PLAY with
+     *  200 OK but sends zero media packets — mode 0x01 is the untested value. */
+    suspend fun enterPreviewMode() {
+        requestLock.withLock { enterMode(MODE_PREVIEW) }
+    }
+
     private suspend fun enterSettingsMode() {
         writeBare(CMD_MODE_400)
         delay(30)
@@ -370,6 +378,9 @@ class GpsocketClient(
     data class CameraFile(val kind: Int, val id: Int, val timestamp: LocalDateTime?, val size: Long) {
         val kindChar: Char get() = kind.toChar()
         val sizeBytes: Long get() = size * 1024
+        /** Record ids are NOT unique (photo+video pairs share one). The kind
+         *  byte disambiguates — same reason the protocol has 0x0603. */
+        val uniqueId: Int get() = (id shl 8) or kind
         override fun toString(): String =
             "%c id=0x%04x %s size=%dKiB".format(kindChar, id, timestamp ?: "?", size)
     }
