@@ -37,6 +37,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -103,12 +106,32 @@ private fun FilesList(vm: CameraViewModel) {
 
     LaunchedEffect(Unit) { vm.refreshFiles(); vm.refreshLocalFiles() }
 
+    var filter by remember { mutableStateOf(MediaFilter.ALL) }
+
+    Column(Modifier.fillMaxSize()) {
+        SingleChoiceSegmentedButtonRow(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+        ) {
+            MediaFilter.entries.forEachIndexed { i, f ->
+                SegmentedButton(
+                    selected = filter == f,
+                    onClick = { filter = f },
+                    shape = SegmentedButtonDefaults.itemShape(i, MediaFilter.entries.size)
+                ) { Text(f.label) }
+            }
+        }
     PullToRefreshBox(
         isRefreshing = loading,
         onRefresh = { vm.refreshFiles(); vm.refreshLocalFiles() },
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier.fillMaxSize().weight(1f)
     ) {
-        val list = files
+        val list = files?.let { all ->
+            when (filter) {
+                MediaFilter.ALL -> all
+                MediaFilter.VIDEOS -> all.filter { it.kindChar != 'J' }
+                MediaFilter.PHOTOS -> all.filter { it.kindChar == 'J' }
+            }
+        }
         when {
             list == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
@@ -140,10 +163,15 @@ private fun FilesList(vm: CameraViewModel) {
             }
         }
     }
+    }
 
     playing?.let { uri ->
         PlayerDialog(uri = uri, onClose = { playing = null })
     }
+}
+
+private enum class MediaFilter(val label: String) {
+    ALL("All"), VIDEOS("Videos"), PHOTOS("Photos")
 }
 
 @Composable
