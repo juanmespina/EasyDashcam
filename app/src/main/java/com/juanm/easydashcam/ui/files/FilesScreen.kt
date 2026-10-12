@@ -42,6 +42,7 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -91,9 +92,14 @@ private fun FilesList(vm: CameraViewModel) {
     var playing by remember { mutableStateOf<Uri?>(null) }
 
     var pendingNotif by remember { mutableStateOf<GpsocketClient.CameraFile?>(null) }
+    var pendingBatch by remember { mutableStateOf(false) }
+    var batchTrigger by remember { mutableIntStateOf(0) }
     val notifPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { pendingNotif?.let(vm::download); pendingNotif = null }
+    ) {
+        pendingNotif?.let(vm::download); pendingNotif = null
+        if (pendingBatch) { pendingBatch = false; batchTrigger++ }
+    }
 
     val startDownload = { f: GpsocketClient.CameraFile ->
         if (Build.VERSION.SDK_INT >= 33) {
@@ -101,6 +107,14 @@ private fun FilesList(vm: CameraViewModel) {
             notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
             vm.download(f)
+        }
+    }
+    val startBatch: () -> Unit = {
+        if (Build.VERSION.SDK_INT >= 33) {
+            pendingBatch = true
+            notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            batchTrigger++
         }
     }
 
@@ -120,11 +134,6 @@ private fun FilesList(vm: CameraViewModel) {
                 ) { Text(f.label) }
             }
         }
-    PullToRefreshBox(
-        isRefreshing = loading,
-        onRefresh = { vm.refreshFiles(); vm.refreshLocalFiles() },
-        modifier = Modifier.fillMaxSize().weight(1f)
-    ) {
         // Locked (L) records can't be served — the camera feff-refuses their
         // downloads and Viidure's captures never show one transferred either.
         val lockedCount = files?.count { it.kindChar == 'L' } ?: 0
@@ -136,6 +145,24 @@ private fun FilesList(vm: CameraViewModel) {
                 MediaFilter.PHOTOS -> servable.filter { it.kindChar == 'J' }
             }
         }
+        // Everything visible that isn't already on the phone or in flight.
+        val pending = list.orEmpty().filter {
+            localFiles[it.uniqueId] == null && downloads[it.uniqueId] == null
+        }
+        LaunchedEffect(batchTrigger) {
+            if (batchTrigger > 0) pending.forEach(vm::download)
+        }
+        if (pending.isNotEmpty()) {
+            TextButton(
+                onClick = startBatch,
+                modifier = Modifier.align(Alignment.End).padding(end = 16.dp)
+            ) { Text("Download all (${pending.size})") }
+        }
+    PullToRefreshBox(
+        isRefreshing = loading,
+        onRefresh = { vm.refreshFiles(); vm.refreshLocalFiles() },
+        modifier = Modifier.fillMaxSize().weight(1f)
+    ) {
         when {
             list == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
