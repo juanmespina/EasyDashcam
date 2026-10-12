@@ -24,7 +24,9 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -37,9 +39,13 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -99,9 +105,12 @@ private fun FilesList(vm: CameraViewModel) {
     val loading by vm.filesLoading.collectAsStateWithLifecycle()
     val downloads by vm.downloads.collectAsStateWithLifecycle()
     val localFiles by vm.localFiles.collectAsStateWithLifecycle()
-    var playing by remember { mutableStateOf<Uri?>(null) }
-    var deleteCandidate by remember { mutableStateOf<Uri?>(null) }
-    var gridView by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    var playing by remember { mutableStateOf<Pair<Uri, Boolean>?>(null) }
+    var actionsFor by remember { mutableStateOf<Pair<Uri, GpsocketClient.CameraFile>?>(null) }
+    var viewMode by remember { mutableStateOf(ViewMode.LIST) }
+    var sortMode by remember { mutableStateOf(SortMode.NEWEST) }
+    var sortMenu by remember { mutableStateOf(false) }
 
     var pendingNotif by remember { mutableStateOf<GpsocketClient.CameraFile?>(null) }
     var pendingBatch by remember { mutableStateOf(false) }
@@ -155,6 +164,7 @@ private fun FilesList(vm: CameraViewModel) {
                 MediaFilter.ALL -> servable
                 MediaFilter.VIDEOS -> servable.filter { it.kindChar != 'J' }
                 MediaFilter.PHOTOS -> servable.filter { it.kindChar == 'J' }
+                MediaFilter.ON_DEVICE -> servable.filter { localFiles.containsKey(it.uniqueId) }
             }
         }
         // Everything visible that isn't already on the phone or in flight.
@@ -186,10 +196,27 @@ private fun FilesList(vm: CameraViewModel) {
             if (pending.isNotEmpty()) {
                 TextButton(onClick = startBatch) { Text("Download all (${pending.size})") }
             }
-            IconButton(onClick = { gridView = !gridView }) {
+            Box {
+                IconButton(onClick = { sortMenu = true }) {
+                    Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "Sort")
+                }
+                DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
+                    SortMode.entries.forEach { mode ->
+                        DropdownMenuItem(
+                            text = { Text(mode.label + if (mode == sortMode) " ✓" else "") },
+                            onClick = { sortMode = mode; sortMenu = false }
+                        )
+                    }
+                }
+            }
+            IconButton(onClick = { viewMode = viewMode.next() }) {
                 Icon(
-                    if (gridView) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView,
-                    contentDescription = if (gridView) "List view" else "Grid view"
+                    when (viewMode) {
+                        ViewMode.LIST -> Icons.AutoMirrored.Filled.ViewList
+                        ViewMode.GRID -> Icons.Default.GridView
+                        ViewMode.TIMELINE -> Icons.Default.Timeline
+                    },
+                    contentDescription = "${viewMode.label} — tap to switch"
                 )
             }
         }
@@ -208,8 +235,12 @@ private fun FilesList(vm: CameraViewModel) {
                 Text("No recordings on the camera")
             }
             else -> {
+                // Days always run newest-first; the sort option orders within
+                // each day so the structure stays readable.
                 val grouped = list.groupBy { it.timestamp?.toLocalDate() }
-                if (gridView) {
+                    .entries.sortedWith(
+                        compareBy(nullsLast(reverseOrder<LocalDate>())) { it.key })
+                if (viewMode == ViewMode.GRID) {
                     LazyVerticalGrid(
                         columns = GridCells.Adaptive(minSize = 170.dp),
                         modifier = Modifier.fillMaxSize()
@@ -219,7 +250,7 @@ private fun FilesList(vm: CameraViewModel) {
                                 DayHeader(day)
                             }
                             itemsIndexed(
-                                dayFiles,
+                                dayFiles.sortedWith(sortMode.comparator),
                                 key = { i, f -> "${f.uniqueId}_${f.timestamp}_$i" }
                             ) { _, f ->
                                 val uri = localFiles[f.uniqueId]
@@ -229,8 +260,8 @@ private fun FilesList(vm: CameraViewModel) {
                                     durationSec = durations[f.uniqueId],
                                     local = uri != null,
                                     onDownload = { startDownload(f) },
-                                    onPlay = uri?.let { { playing = it } },
-                                    onLongPress = uri?.let { { deleteCandidate = it } }
+                                    onPlay = uri?.let { { playing = it to (f.kindChar == 'J') } },
+                                    onLongPress = uri?.let { { actionsFor = it to f } }
                                 )
                             }
                         }
@@ -244,21 +275,40 @@ private fun FilesList(vm: CameraViewModel) {
                     LazyColumn(Modifier.fillMaxSize()) {
                         grouped.forEach { (day, dayFiles) ->
                             item(key = "h$day") { DayHeader(day) }
-                            itemsIndexed(
-                                dayFiles,
-                                key = { i, f -> "${f.uniqueId}_${f.timestamp}_$i" }
-                            ) { _, f ->
+                            val sorted = dayFiles.sortedWith(sortMode.comparator)
+                            sorted.forEachIndexed { i, f ->
                                 val uri = localFiles[f.uniqueId]
-                                FileRow(
-                                    file = f,
-                                    download = downloads[f.uniqueId],
-                                    durationSec = durations[f.uniqueId],
-                                    local = uri != null,
-                                    onDownload = { startDownload(f) },
-                                    onPlay = uri?.let { { playing = it } },
-                                    onLongPress = uri?.let { { deleteCandidate = it } }
-                                )
-                                HorizontalDivider()
+                                item(key = "${f.uniqueId}_${f.timestamp}_$i") {
+                                    if (viewMode == ViewMode.TIMELINE) {
+                                        TimelineRow(f, i == 0, i == sorted.lastIndex,
+                                            downloads[f.uniqueId], durations[f.uniqueId],
+                                            uri != null, { startDownload(f) },
+                                            uri?.let { { playing = it to (f.kindChar == 'J') } },
+                                            uri?.let { { actionsFor = it to f } })
+                                    } else {
+                                        FileRow(
+                                            file = f,
+                                            download = downloads[f.uniqueId],
+                                            durationSec = durations[f.uniqueId],
+                                            local = uri != null,
+                                            onDownload = { startDownload(f) },
+                                            onPlay = uri?.let { { playing = it to (f.kindChar == 'J') } },
+                                            onLongPress = uri?.let { { actionsFor = it to f } }
+                                        )
+                                    }
+                                    HorizontalDivider()
+                                }
+                                // Timeline mode marks recording gaps — the
+                                // spaces where the camera was off matter as
+                                // much as the clips.
+                                if (viewMode == ViewMode.TIMELINE) {
+                                    val next = sorted.getOrNull(i + 1)
+                                    if (f.timestamp != null && next?.timestamp != null) {
+                                        val gap = java.time.Duration
+                                            .between(next.timestamp, f.timestamp).seconds
+                                        if (gap > 900) item(key = "gap_$i") { GapRow(gap) }
+                                    }
+                                }
                             }
                         }
                         if (lockedCount > 0) {
@@ -271,28 +321,61 @@ private fun FilesList(vm: CameraViewModel) {
     }
     }
 
-    playing?.let { uri ->
-        PlayerDialog(uri = uri, onClose = { playing = null })
+    playing?.let { (uri, isImage) ->
+        PlayerDialog(uri = uri, isImage = isImage, onClose = { playing = null })
     }
-    deleteCandidate?.let { uri ->
+    actionsFor?.let { (uri, f) ->
         AlertDialog(
-            onDismissRequest = { deleteCandidate = null },
-            title = { Text("Delete local copy?") },
-            text = { Text("Removes the file from this device. The camera keeps its recording.") },
+            onDismissRequest = { actionsFor = null },
+            title = {
+                Text(f.timestamp?.format(
+                    DateTimeFormatter.ofPattern("MMM d, HH:mm:ss", Locale.getDefault()))
+                    ?: "Downloaded file")
+            },
+            text = { Text("Local copy on this device") },
             confirmButton = {
-                TextButton(onClick = { vm.deleteLocal(uri); deleteCandidate = null }) {
-                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                Row {
+                    TextButton(onClick = {
+                        playing = uri to (f.kindChar == 'J'); actionsFor = null
+                    }) { Text("Play") }
+                    TextButton(onClick = {
+                        shareFile(context, uri, f.kindChar == 'J'); actionsFor = null
+                    }) { Text("Share") }
+                    TextButton(onClick = { vm.deleteLocal(uri); actionsFor = null }) {
+                        Text("Delete", color = MaterialTheme.colorScheme.error)
+                    }
                 }
             },
             dismissButton = {
-                TextButton(onClick = { deleteCandidate = null }) { Text("Cancel") }
+                TextButton(onClick = { actionsFor = null }) { Text("Cancel") }
             }
         )
     }
 }
 
+private fun shareFile(context: android.content.Context, uri: Uri, isImage: Boolean) {
+    val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+        type = if (isImage) "image/jpeg" else "video/*"
+        putExtra(android.content.Intent.EXTRA_STREAM, uri)
+        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(android.content.Intent.createChooser(send, "Share clip"))
+}
+
 private enum class MediaFilter(val label: String) {
-    ALL("All"), VIDEOS("Videos"), PHOTOS("Photos")
+    ALL("All"), VIDEOS("Videos"), PHOTOS("Photos"), ON_DEVICE("On device")
+}
+
+private enum class ViewMode(val label: String) {
+    LIST("List"), GRID("Grid"), TIMELINE("Timeline");
+    fun next() = entries[(ordinal + 1) % entries.size]
+}
+
+private enum class SortMode(val label: String, val comparator: Comparator<GpsocketClient.CameraFile>) {
+    NEWEST("Newest first", compareByDescending { it.timestamp }),
+    OLDEST("Oldest first", compareBy { it.timestamp }),
+    LARGEST("Largest first", compareByDescending { it.size }),
+    SMALLEST("Smallest first", compareBy { it.size })
 }
 
 @Composable
@@ -308,7 +391,10 @@ private fun DayHeader(day: LocalDate?) {
 private fun kindOf(f: GpsocketClient.CameraFile) = when (f.kindChar) {
     'L' -> Icons.Default.Lock to "Locked"
     'J' -> Icons.Default.Photo to "Photo"
-    else -> Icons.Default.Videocam to "Video"
+    'A' -> Icons.Default.Videocam to "Video"
+    // Unknown kind letters (multi-channel cams may use them for rear/interior
+    // feeds) stay visible instead of being silently labelled "Video".
+    else -> Icons.Default.Videocam to "Type ${f.kindChar}"
 }
 
 private fun fileDetail(
@@ -328,6 +414,62 @@ private fun fileDetail(
         download?.takeIf { !it.done }?.etaSec?.let { append(" · ~%ds left".format(it)) }
         if (stillRecording) append(" · still recording?")
         if (local) append(" · downloaded")
+    }
+}
+
+/** Timeline row — a dot on a vertical rail; the rail breaks at day edges. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun TimelineRow(
+    file: GpsocketClient.CameraFile,
+    first: Boolean,
+    last: Boolean,
+    download: CameraSession.DownloadState?,
+    durationSec: Int?,
+    local: Boolean,
+    onDownload: () -> Unit,
+    onPlay: (() -> Unit)?,
+    onLongPress: (() -> Unit)?
+) {
+    val rail = MaterialTheme.colorScheme.outlineVariant
+    ListItem(
+        leadingContent = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(Modifier.size(2.dp, 18.dp)
+                    .background(if (first) Color.Transparent else rail))
+                Box(Modifier.size(10.dp)
+                    .background(MaterialTheme.colorScheme.primary, CircleShape))
+                Box(Modifier.size(2.dp, 18.dp)
+                    .background(if (last) Color.Transparent else rail))
+            }
+        },
+        headlineContent = {
+            Text(file.timestamp?.format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+                ?: "id 0x%04x".format(file.id))
+        },
+        supportingContent = { Text(fileDetail(file, durationSec, download, local)) },
+        trailingContent = { DownloadTrailing(download, local, onDownload, onPlay) },
+        modifier = if (onLongPress != null)
+            Modifier.combinedClickable(onClick = {}, onLongClick = onLongPress)
+        else Modifier
+    )
+}
+
+/** A break in the timeline — the camera was off or not recording. */
+@Composable
+private fun GapRow(gapSec: Long) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        HorizontalDivider(Modifier.weight(1f))
+        Text(
+            if (gapSec >= 3600) "  ~%dh %02dm gap  ".format(gapSec / 3600, gapSec % 3600 / 60)
+            else "  ~%dm gap  ".format(gapSec / 60),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        HorizontalDivider(Modifier.weight(1f))
     }
 }
 
@@ -452,7 +594,7 @@ private fun DownloadTrailing(
 
 /** Full-screen MJPEG playback of a downloaded clip, with seek controls. */
 @Composable
-private fun PlayerDialog(uri: Uri, onClose: () -> Unit) {
+private fun PlayerDialog(uri: Uri, isImage: Boolean, onClose: () -> Unit) {
     val context = LocalContext.current
     var frame by remember { mutableStateOf<Bitmap?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -505,8 +647,13 @@ private fun PlayerDialog(uri: Uri, onClose: () -> Unit) {
                 )
                 else -> CircularProgressIndicator(Modifier.align(Alignment.Center))
             }
-            IconButton(onClick = onClose, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)) {
-                Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+            Row(Modifier.align(Alignment.TopEnd).padding(8.dp)) {
+                IconButton(onClick = { shareFile(context, uri, isImage) }) {
+                    Icon(Icons.Default.Share, contentDescription = "Share", tint = Color.White)
+                }
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+                }
             }
             if (indexed && player.frames.size > 1) {
                 val count = player.frames.size
