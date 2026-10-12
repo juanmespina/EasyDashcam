@@ -10,3 +10,6 @@
 .cxx
 /app/build
 /app/release
+keystore.properties
+*.jks
+*.keystore

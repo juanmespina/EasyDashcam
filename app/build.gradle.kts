@@ -1,9 +1,15 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+}
+
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
 }
 
 android {
@@ -18,10 +24,22 @@ android {
         versionName = "0.1.0"
     }
 
+    signingConfigs {
+        if (keystoreProps.getProperty("storeFile") != null) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            signingConfigs.findByName("release")?.let { signingConfig = it }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -34,6 +52,21 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
+    }
+
+    lint {
+        // This detector crashes on Kotlin 2.0 sources (KaCallableMemberCall
+        // IncompatibleClassChangeError). The app has no LiveData — the rule
+        // can never fire legitimately.
+        disable += "NullSafeMutableLiveData"
+        // Dependencies and targetSdk are pinned deliberately — they are bumped
+        // and verified on camera hardware, not per lint's "newer exists" flag.
+        disable += "GradleDependency"
+        disable += "OldTargetApi"
+        // mipmap-anydpi-v26 is the standard adaptive-icon layout; lint's
+        // suggested merge into -anydpi actually breaks resource linking.
+        disable += "ObsoleteSdkInt"
     }
 
     compileOptions {
