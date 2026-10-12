@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.juanm.easydashcam.core.settings.CameraSetting
+import com.juanm.easydashcam.core.settings.SETTING_DESCRIPTIONS
 import com.juanm.easydashcam.ui.camera.CameraViewModel
 import com.juanm.easydashcam.ui.components.ConnectionGate
 
@@ -99,11 +100,16 @@ private fun SettingsList(vm: CameraViewModel) {
 @Composable
 private fun SettingRow(setting: CameraSetting, raw: ByteArray?, onChange: (Int) -> Unit) {
     val value = raw?.firstOrNull()?.toInt()?.and(0xFF)
+    val desc = SETTING_DESCRIPTIONS[setting.id]
+    val supporting: (@Composable () -> Unit)? = desc?.let { d ->
+        { Text(d, style = MaterialTheme.typography.bodySmall) }
+    }
     when {
         setting.isToggle -> {
             val on = value == setting.options[1].id
             ListItem(
                 headlineContent = { Text(setting.name) },
+                supportingContent = supporting,
                 trailingContent = {
                     Switch(
                         checked = on,
@@ -118,6 +124,7 @@ private fun SettingRow(setting: CameraSetting, raw: ByteArray?, onChange: (Int) 
             val current = setting.options.firstOrNull { it.id == value }?.name ?: "…"
             ListItem(
                 headlineContent = { Text(setting.name) },
+                supportingContent = supporting,
                 trailingContent = {
                     Box {
                         TextButton(onClick = { open = true }, enabled = value != null) {
@@ -137,6 +144,7 @@ private fun SettingRow(setting: CameraSetting, raw: ByteArray?, onChange: (Int) 
         }
         else -> ListItem(   // read-only (e.g. Version) — may be a string param
             headlineContent = { Text(setting.name) },
+            supportingContent = supporting,
             trailingContent = {
                 Text(setting.options.firstOrNull()?.name ?: raw?.let {
                     if (it.size > 1) String(it, Charsets.UTF_8).trimEnd(' ', '\u0000')

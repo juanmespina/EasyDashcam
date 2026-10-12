@@ -22,6 +22,22 @@ data class CameraSetting(
 
 data class SettingCategory(val name: String, val settings: List<CameraSetting>)
 
+/** Plain-language explanations per param id (names repeat — "Resolution"
+ *  exists in both Record and Capture). */
+val SETTING_DESCRIPTIONS = mapOf(
+    0x0000 to "Video quality. Higher resolution = sharper plates and signs, bigger files.",
+    0x0003 to "Length of each loop file. When the card fills up, the oldest clip is overwritten.",
+    0x0004 to "Wide Dynamic Range — balances bright sky against dark shadows, e.g. exiting a tunnel.",
+    0x0005 to "Include microphone audio in recordings.",
+    0x0100 to "Still photo size in megapixels.",
+    0x0101 to "Manual brightness. Raise for dark scenes, lower if the sky is blown out.",
+    0x0108 to "Color temperature for the lighting conditions; Auto is fine for most drives.",
+    0x0200 to "Mains frequency for your region (50 Hz Europe, 60 Hz Americas). The wrong value makes streetlights and dashboards flicker in video.",
+    0x0201 to "How long the camera's LCD stays on before turning itself off.",
+    0x0205 to "Order of the date stamp burned into recordings.",
+    0x0209 to "Camera firmware version.",
+)
+
 /** Parses the camera's settings menu document into UI-ready categories. */
 object MenuParser {
 
