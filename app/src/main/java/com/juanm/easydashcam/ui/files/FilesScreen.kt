@@ -218,7 +218,16 @@ private fun FileRow(
             Text(file.timestamp?.format(DateTimeFormatter.ofPattern("HH:mm:ss")) ?: "id 0x%04x".format(file.id))
         },
         supportingContent = {
-            Text("$kindLabel · ${"%.1f".format(file.size / 1024f)} MB${if (local) " · downloaded" else ""}")
+            // The camera feff-refuses records it is still writing — flag rows
+            // that fresh so a refusal doesn't look like a broken download.
+            val stillRecording = file.timestamp?.let {
+                kotlin.math.abs(java.time.Duration.between(it, java.time.LocalDateTime.now()).toMinutes()) < 3
+            } == true
+            Text(
+                "$kindLabel · ${"%.1f".format(file.size / 1024f)} MB" +
+                    (if (stillRecording) " · still recording?" else "") +
+                    (if (local) " · downloaded" else "")
+            )
         },
         trailingContent = { DownloadTrailing(download, local, onDownload, onPlay) }
     )
@@ -232,12 +241,14 @@ private fun DownloadTrailing(
     onPlay: (() -> Unit)? = null
 ) {
     when {
-        download?.error != null -> Icon(
-            Icons.Default.ErrorOutline,
-            contentDescription = download.error,
-            tint = MaterialTheme.colorScheme.error,
-            modifier = Modifier.size(20.dp)
-        )
+        download?.error != null -> IconButton(onClick = onDownload) {
+            Icon(
+                Icons.Default.ErrorOutline,
+                contentDescription = "Failed: ${download.error} — tap to retry",
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(20.dp)
+            )
+        }
         onPlay != null -> IconButton(onClick = onPlay) {
             Icon(
                 Icons.Default.PlayArrow,
