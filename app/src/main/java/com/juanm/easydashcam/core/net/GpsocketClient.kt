@@ -127,7 +127,9 @@ class GpsocketClient(
             withContext(Dispatchers.IO) {
                 val s = Socket()
                 s.tcpNoDelay = true
-                s.soTimeout = 0
+                // The camera's status blob arrives ~1/s; if nothing arrives for
+                // 15 s the link is dead (a dropped hotspot never sends FIN).
+                s.soTimeout = 15_000
                 s.connect(InetSocketAddress(host, port), 5000)
                 socket = s
                 input = BufferedInputStream(s.getInputStream(), 65536)
