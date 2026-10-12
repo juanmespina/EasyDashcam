@@ -4,7 +4,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -71,13 +71,13 @@ private fun SettingsList(vm: CameraViewModel) {
                             modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp)
                         )
                     }
-                    items(
+                    itemsIndexed(
                         cat.settings.filter { it.type != 0x01 },   // skip action rows (Format, reset)
-                        key = { it.id }
-                    ) { s ->
+                        key = { i, s -> "${s.id}_$i" }   // menu ids are not guaranteed unique
+                    ) { _, s ->
                         SettingRow(
                             setting = s,
-                            value = values[s.id]?.firstOrNull()?.toInt()?.and(0xFF),
+                            raw = values[s.id],
                             onChange = { v -> vm.setSetting(s.id, v) }
                         )
                         HorizontalDivider()
@@ -89,7 +89,8 @@ private fun SettingsList(vm: CameraViewModel) {
 }
 
 @Composable
-private fun SettingRow(setting: CameraSetting, value: Int?, onChange: (Int) -> Unit) {
+private fun SettingRow(setting: CameraSetting, raw: ByteArray?, onChange: (Int) -> Unit) {
+    val value = raw?.firstOrNull()?.toInt()?.and(0xFF)
     when {
         setting.isToggle -> {
             val on = value == setting.options[1].id
@@ -126,11 +127,13 @@ private fun SettingRow(setting: CameraSetting, value: Int?, onChange: (Int) -> U
                 }
             )
         }
-        else -> ListItem(   // read-only (e.g. Version)
+        else -> ListItem(   // read-only (e.g. Version) — may be a string param
             headlineContent = { Text(setting.name) },
             trailingContent = {
-                Text(setting.options.firstOrNull()?.name
-                    ?: (value?.let { "0x%02x".format(it) } ?: "…"))
+                Text(setting.options.firstOrNull()?.name ?: raw?.let {
+                    if (it.size > 1) String(it, Charsets.UTF_8).trimEnd(' ', '\u0000')
+                    else "0x%02x".format(value ?: 0)
+                } ?: "…")
             }
         )
     }

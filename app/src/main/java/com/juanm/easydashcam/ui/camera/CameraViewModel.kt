@@ -154,7 +154,9 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             runCatching {
                 val xml = client.lastMenuXml ?: client.requestMenuXml()
                 val cats = MenuParser.parse(xml)
-                val ids = cats.flatMap { c -> c.settings.filter { it.isEnum }.map { it.id } }
+                // Query everything but actions (type 0x01) — read-only rows
+                // like Version need their value too.
+                val ids = cats.flatMap { c -> c.settings.filter { it.type != 0x01 }.map { it.id } }
                 cats to client.getParams(ids)
             }.onSuccess { (cats, values) ->
                 _settings.value = cats
