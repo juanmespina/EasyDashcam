@@ -155,8 +155,24 @@ class DownloadService : Service() {
         }
         if (out == null) { finishFile(f.uniqueId, error = "no destination"); return }
 
+        // Photo records come back as raw JPEG, not AVI — capture the magic
+        // bytes while streaming so the MediaStore entry can be fixed afterwards.
+        val head = java.io.ByteArrayOutputStream()
+        val sniffed = object : OutputStream() {
+            override fun write(b: Int) {
+                if (head.size() < 4) head.write(b)
+                out.write(b)
+            }
+            override fun write(b: ByteArray, off: Int, len: Int) {
+                if (head.size() < 4) head.write(b, off, minOf(len, 4 - head.size()))
+                out.write(b, off, len)
+            }
+            override fun flush() = out.flush()
+            override fun close() = out.close()
+        }
+
         val result = try {
-            out.use {
+            sniffed.use {
                 session.client.downloadFile(f, it) { got, total ->
                     if (f.uniqueId in cancelled) throw CancellationException("user cancelled")
                     session.updateDownload(f.uniqueId, CameraSession.DownloadState(got, total))
@@ -170,8 +186,18 @@ class DownloadService : Service() {
         when (result) {
             is GpsocketClient.DownloadResult.Success -> {
                 if (Build.VERSION.SDK_INT >= 29 && uri != null) {
+                    val magic = head.toByteArray()
+                    val isJpeg = magic.size >= 2 &&
+                        magic[0] == 0xFF.toByte() && magic[1] == 0xD8.toByte()
                     contentResolver.update(uri, ContentValues().apply {
                         put(MediaStore.Video.Media.IS_PENDING, 0)
+                        if (isJpeg) {
+                            put(MediaStore.Video.Media.DISPLAY_NAME,
+                                label.removeSuffix(".avi") + ".jpg")
+                            put(MediaStore.Video.Media.MIME_TYPE, "image/jpeg")
+                            put(MediaStore.Video.Media.RELATIVE_PATH,
+                                Environment.DIRECTORY_PICTURES + "/EasyDashcam")
+                        }
                     }, null, null)
                 }
                 finishFile(f.uniqueId)

@@ -87,12 +87,13 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             getApplication<Application>().contentResolver.query(
                 collection,
                 arrayOf(MediaStore.Video.Media._ID, MediaStore.Video.Media.DISPLAY_NAME),
-                "${MediaStore.Video.Media.RELATIVE_PATH} LIKE 'Movies/EasyDashcam/%'",
+                "(${MediaStore.Video.Media.RELATIVE_PATH} LIKE 'Movies/EasyDashcam/%'" +
+                    " OR ${MediaStore.Video.Media.RELATIVE_PATH} LIKE 'Pictures/EasyDashcam/%')",
                 null, null
             )?.use { c ->
                 val idCol = c.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
                 val nameCol = c.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
-                val nameRx = Regex("""cam_([0-9a-fA-F]{4})([A-Z])\.avi""")
+                val nameRx = Regex("""cam_([0-9a-fA-F]{4})([A-Z])\.(avi|jpg)""")
                 while (c.moveToNext()) {
                     val m = nameRx.matchEntire(c.getString(nameCol)) ?: continue
                     val uid = (m.groupValues[1].toInt(16) shl 8) or m.groupValues[2][0].code
