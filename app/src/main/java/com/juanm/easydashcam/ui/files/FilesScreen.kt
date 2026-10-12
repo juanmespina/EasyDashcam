@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.FilterAlt
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Lock
@@ -44,8 +45,11 @@ import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -57,6 +61,7 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Slider
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -111,6 +116,9 @@ private fun FilesList(vm: CameraViewModel) {
     var viewMode by remember { mutableStateOf(ViewMode.LIST) }
     var sortMode by remember { mutableStateOf(SortMode.NEWEST) }
     var sortMenu by remember { mutableStateOf(false) }
+    var dayFilter by remember { mutableStateOf<LocalDate?>(null) }
+    var filterMenu by remember { mutableStateOf(false) }
+    var pickDay by remember { mutableStateOf(false) }
 
     var pendingNotif by remember { mutableStateOf<GpsocketClient.CameraFile?>(null) }
     var pendingBatch by remember { mutableStateOf(false) }
@@ -160,12 +168,14 @@ private fun FilesList(vm: CameraViewModel) {
         val lockedCount = files?.count { it.kindChar == 'L' } ?: 0
         val list = files?.let { all ->
             val servable = all.filter { it.kindChar != 'L' }
-            when (filter) {
+            val byKind = when (filter) {
                 MediaFilter.ALL -> servable
                 MediaFilter.VIDEOS -> servable.filter { it.kindChar != 'J' }
                 MediaFilter.PHOTOS -> servable.filter { it.kindChar == 'J' }
                 MediaFilter.ON_DEVICE -> servable.filter { localFiles.containsKey(it.uniqueId) }
             }
+            if (dayFilter == null) byKind
+            else byKind.filter { it.timestamp?.toLocalDate() == dayFilter }
         }
         // Everything visible that isn't already on the phone or in flight.
         val pending = list.orEmpty().filter {
@@ -195,6 +205,42 @@ private fun FilesList(vm: CameraViewModel) {
         ) {
             if (pending.isNotEmpty()) {
                 TextButton(onClick = startBatch) { Text("Download all (${pending.size})") }
+            }
+            if (dayFilter != null) {
+                FilterChip(
+                    selected = true,
+                    onClick = { dayFilter = null },
+                    label = {
+                        Text(dayFilter!!.format(
+                            DateTimeFormatter.ofPattern("MMM d", Locale.getDefault())))
+                    },
+                    trailingIcon = {
+                        Icon(Icons.Default.Close, contentDescription = "Clear filter",
+                            modifier = Modifier.size(16.dp))
+                    }
+                )
+            }
+            Box {
+                IconButton(onClick = { filterMenu = true }) {
+                    Icon(Icons.Default.FilterAlt, contentDescription = "Filter by date")
+                }
+                DropdownMenu(expanded = filterMenu, onDismissRequest = { filterMenu = false }) {
+                    val today = LocalDate.now()
+                    listOf(
+                        "All dates" to null,
+                        "Today" to today,
+                        "Yesterday" to today.minusDays(1)
+                    ).forEach { (label, day) ->
+                        DropdownMenuItem(
+                            text = { Text(label + if (day == dayFilter) " ✓" else "") },
+                            onClick = { dayFilter = day; filterMenu = false }
+                        )
+                    }
+                    DropdownMenuItem(
+                        text = { Text("Pick a date…") },
+                        onClick = { pickDay = true; filterMenu = false }
+                    )
+                }
             }
             Box {
                 IconButton(onClick = { sortMenu = true }) {
@@ -232,7 +278,8 @@ private fun FilesList(vm: CameraViewModel) {
                 if (!loading) Text("Pull down to refresh")
             }
             list.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No recordings on the camera")
+                Text(if (files.isNullOrEmpty()) "No recordings on the camera"
+                     else "Nothing matches this filter")
             }
             else -> {
                 // Days always run newest-first; the sort option orders within
@@ -321,6 +368,24 @@ private fun FilesList(vm: CameraViewModel) {
     }
     }
 
+    if (pickDay) {
+        val dp = rememberDatePickerState()
+        DatePickerDialog(
+            onDismissRequest = { pickDay = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    // DatePicker returns millis at UTC midnight — convert in
+                    // UTC so the picked day doesn't shift with the timezone.
+                    dayFilter = dp.selectedDateMillis?.let {
+                        java.time.Instant.ofEpochMilli(it)
+                            .atZone(java.time.ZoneOffset.UTC).toLocalDate()
+                    }
+                    pickDay = false
+                }) { Text("OK") }
+            },
+            dismissButton = { TextButton(onClick = { pickDay = false }) { Text("Cancel") } }
+        ) { DatePicker(state = dp) }
+    }
     playing?.let { (uri, isImage) ->
         PlayerDialog(uri = uri, isImage = isImage, onClose = { playing = null })
     }
