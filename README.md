@@ -9,8 +9,10 @@ The official Viidure app is ad-heavy, gates basic features behind a paid members
 ## Features
 
 - Live preview (RTSP/MJPEG, custom client — ExoPlayer can't do payload type 26)
-- Browse recordings and photos on the camera's SD card
-- Background downloads with progress notifications (MediaStore, shows in gallery)
+- Browse recordings and photos on the camera's SD card, filtered by media type
+- Background downloads with progress notifications (MediaStore, shows in gallery;
+  photos land in `Pictures/`) — locked event clips are hidden since the camera
+  won't serve them anyway
 - In-app playback with seeking — the camera's MJPEG-in-AVI files don't play in stock players
 - Camera settings (menu-driven from the camera's own XML)
 - No internet ever leaves your phone
