@@ -43,6 +43,7 @@ class RtspMjpegClient(
      */
     suspend fun run(onFrame: (Bitmap) -> Unit) = withContext(Dispatchers.IO) {
         val base = "rtsp://$host:$port$path"
+        sessionId = null   // a re-run is a fresh connection; drop the old session
 
         // The firmware only allows one RTSP session and answers TEARDOWN with
         // "501 Not Implemented" — after a leave/re-enter it may still hold the
