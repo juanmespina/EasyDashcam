@@ -107,9 +107,11 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             )?.use { c ->
                 val idCol = c.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
                 val nameCol = c.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
-                val nameRx = Regex("""cam_([0-9a-fA-F]{4})([A-Z])\.(avi|jpg)""")
+                // New names are <stamp>_<id4><kind>.<ext>; legacy cam_<id4><kind>.
+                // The suffix anchored at the end matches both.
+                val nameRx = Regex("""([0-9a-fA-F]{4})([A-Z])\.(avi|jpg)$""")
                 while (c.moveToNext()) {
-                    val m = nameRx.matchEntire(c.getString(nameCol)) ?: continue
+                    val m = nameRx.find(c.getString(nameCol)) ?: continue
                     val uid = (m.groupValues[1].toInt(16) shl 8) or m.groupValues[2][0].code
                     out[uid] = ContentUris.withAppendedId(collection, c.getLong(idCol))
                 }

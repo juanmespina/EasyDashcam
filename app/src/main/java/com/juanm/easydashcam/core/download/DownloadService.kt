@@ -42,6 +42,7 @@ class DownloadService : Service() {
         private const val EXTRA_ID = "id"
         private const val EXTRA_KIND = "kind"
         private const val EXTRA_SIZE = "size"
+        private const val EXTRA_TS = "ts"
         private const val CHANNEL_ID = "downloads"
         private const val CHANNEL_RESULT_ID = "downloads_done"
         private const val NOTIF_ID = 1
@@ -54,6 +55,7 @@ class DownloadService : Service() {
                 putExtra(EXTRA_ID, f.id)
                 putExtra(EXTRA_KIND, f.kind)
                 putExtra(EXTRA_SIZE, f.size)
+                f.timestamp?.let { putExtra(EXTRA_TS, it.toString()) }
             }
 
         fun cancelIntent(context: Context, uniqueId: Int) =
@@ -88,7 +90,8 @@ class DownloadService : Service() {
                 val f = GpsocketClient.CameraFile(
                     kind = intent.getIntExtra(EXTRA_KIND, 0),
                     id = intent.getIntExtra(EXTRA_ID, 0),
-                    timestamp = null,
+                    timestamp = intent.getStringExtra(EXTRA_TS)
+                        ?.let { runCatching { java.time.LocalDateTime.parse(it) }.getOrNull() },
                     size = intent.getLongExtra(EXTRA_SIZE, 0)
                 )
                 queue.trySend(f)
@@ -130,7 +133,13 @@ class DownloadService : Service() {
     }
 
     private suspend fun downloadOne(f: GpsocketClient.CameraFile) {
-        val label = "cam_%04x%c.avi".format(f.id, f.kindChar)
+        // Timestamped names sort naturally and make a clip findable in the
+        // gallery: 20251011_143022_e507A.avi — the id+kind suffix stays so
+        // refreshLocalFiles can map the file back to its camera record.
+        val stamp = f.timestamp
+            ?.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
+        val label = (stamp?.let { "${it}_" } ?: "cam_") +
+            "%04x%c.avi".format(f.id, f.kindChar)
         val out: OutputStream?
         val uri: Uri?
         val fallback: File?
@@ -168,12 +177,19 @@ class DownloadService : Service() {
             override fun close() = out.close()
         }
 
+        val startMs = System.currentTimeMillis()
         val result = try {
             sniffed.use {
                 session.client.downloadFile(f, it) { got, total ->
                     if (f.uniqueId in cancelled) throw CancellationException("user cancelled")
-                    session.updateDownload(f.uniqueId, CameraSession.DownloadState(got, total))
-                    nm.notify(NOTIF_ID, notification("$label — ${got / 1024}/${total / 1024} KiB", f.uniqueId))
+                    val elapsed = System.currentTimeMillis() - startMs
+                    val eta = if (elapsed > 1500 && got in 1 until total)
+                        (total - got) * elapsed / got / 1000 else null
+                    session.updateDownload(f.uniqueId,
+                        CameraSession.DownloadState(got, total, etaSec = eta))
+                    nm.notify(NOTIF_ID, notification(
+                        "$label — ${got / 1024}/${total / 1024} KiB" +
+                            (eta?.let { e -> ", ~$e s left" } ?: ""), f.uniqueId))
                 }
             }
         } catch (_: CancellationException) {

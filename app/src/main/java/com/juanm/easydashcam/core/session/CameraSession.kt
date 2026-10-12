@@ -30,7 +30,9 @@ class CameraSession(context: Context) {
         val received: Long,
         val total: Long,
         val done: Boolean = false,
-        val error: String? = null
+        val error: String? = null,
+        /** Estimated seconds remaining, from measured throughput. */
+        val etaSec: Long? = null
     )
 
     private val _downloads = MutableStateFlow<Map<Int, DownloadState>>(emptyMap())
