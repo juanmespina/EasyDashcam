@@ -565,6 +565,8 @@ class GpsocketClient(
             } catch (_: Throwable) {
                 // socket closed
             } finally {
+                heartbeatJob?.cancel()
+                heartbeatJob = null
                 _state.emit(State.Disconnected)
                 closeQuietly()
             }
