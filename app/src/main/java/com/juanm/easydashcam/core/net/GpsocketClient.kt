@@ -26,17 +26,19 @@ import java.time.LocalDateTime
 /**
  * Client for the camera's GPSOCKET protocol (TCP 8081 on 192.168.100.1).
  *
- * Wire format (little-endian), reverse-engineered from pcaps of the Viidure app:
+ * Wire format (little-endian), reverse-engineered from pcaps of the Viidure app
+ * (see docs/recon/pcap_11oct_analysis.txt):
  *
- *   | "GPSOCKET" (8 bytes magic) | type u16 | cmd u16 | [len u16 | payload (len bytes)] |
+ *   | "GPSOCKET" (8 bytes magic) | type u16 | cmd u16 | body — shape depends on cmd |
  *
- * type: 1 = phone -> camera, 2 = camera -> phone, 3 = bulk-transfer marker.
+ * type: 1 = phone -> camera, 2 = camera -> phone (u16 len + payload),
+ *       3 = camera -> phone short reply (fixed 2-byte arg, no len field).
  * Outgoing frames fall in three shapes observed on the wire:
- *   - bare      : header only (12 bytes total), e.g. cmd 0x0001 keepalive
- *   - fixed-arg : header + inline argument bytes, e.g. cmd 0x0004 param query (u32 param id),
+ *   - bare      : header only (12 bytes total), e.g. cmd 0x0100 keepalive
+ *   - fixed-arg : header + inline argument bytes, e.g. cmd 0x0004 param get (u32 param id),
  *                 cmd 0x0500 login (u32 random session token)
  *   - length    : header + u16 length + payload, e.g. cmd 0x00ff time sync
- * Incoming camera frames always use the length form.
+ * Incoming camera frames always use the length form (len may be 0).
  */
 class GpsocketClient(
     private val host: String = CAMERA_HOST,
@@ -50,26 +52,33 @@ class GpsocketClient(
         // Outgoing frame type
         const val TYPE_REQUEST = 1
 
-        // Command ids. NOTE: partly byte-swapped in earlier revision; verified
-        // against Viidure pcaps: only 0x0500/0x00ff/0x0303 survive symmetric.
-        const val CMD_LOGIN = 0x0500          // + u32 random token
-        const val CMD_PARAM_QUERY = 0x0004    // + u32 param id, answers carry the VALUE
-        const val CMD_KEEPALIVE = 0x0100      // bare, Viidure sends this constantly
-        const val CMD_PRE_TIMESYNC = 0x0200   // bare, sent right before time sync
+        // Command ids — verified against the labeled 2026-10-11 pcap.
+        const val CMD_LOGIN = 0x0500          // + u32 random token; RX len=6 session key
+        const val CMD_GET_PARAM = 0x0004      // + u32 param id; RX value (u8 enum, or string)
+        const val CMD_SET_PARAM = 0x0104      // + param u16 | 00 00 | 0x01 | value u8; RX empty ack
+        const val CMD_KEEPALIVE = 0x0100      // bare; RX 27-byte status blob
+        const val CMD_MENU_XML = 0x0200       // bare; RX menu XML in ~498B chunks + empty terminator
         const val CMD_TIMESYNC = 0x00FF       // len=17, "GPVENDOR\0\0" + datetime
-        const val CMD_STATUS_FLAGS = 0x0000   // + u8 flag byte (0x00/0x02/0x03 seen)
-        const val CMD_UNKNOWN_800 = 0x0800    // + u8 0x00
-        const val CMD_UNKNOWN_001 = 0x0001    // bare
-        const val CMD_UNKNOWN_203 = 0x0203    // bare
-        const val CMD_HEARTBEAT = 0x0303      // status exchange; camera replies 209-byte blob
-        // File-operation suspects from pcaps (to pin down via live probing):
-        const val CMD_PROBE_300 = 0x0300      // phone sent with u16 args 0x1247/0xe352
-        const val CMD_PROBE_603 = 0x0603      // phone sent with 1-byte arg 0x41 before transfer
-        const val CMD_PROBE_305 = 0x0305      // phone echoed; cam uses same cmd for 32KB data chunks
-        const val CMD_BULK_404 = 0x0403       // cam TYPE=3 65,528B frame opening a file transfer
-        const val CMD_FLOW_304 = 0x0304       // phone ack pairs counting down during transfer
+        const val CMD_STATUS_FLAGS = 0x0000   // + u8 mode byte: 0x00 idle, 0x02 file list, 0x03 settings
+        const val CMD_SESSION_001 = 0x0001    // bare session step
+        const val CMD_MODE_400 = 0x0400       // bare; sent before the settings param refresh
+        const val CMD_AUTH_ROUND = 0x0700     // + u32 challenge; RX len=4 response
+        const val CMD_SESSION_800 = 0x0800    // + u8 0x00 session step
 
-        private val INIT_PARAM_IDS = intArrayOf(0x9002, 0x9003, 0x9004, 0x9009, 0x0300, 0x9006)
+        const val MODE_IDLE = 0x00
+        const val MODE_FILE_LIST = 0x02
+        const val MODE_SETTINGS = 0x03
+        const val CMD_FILE_COUNT = 0x0203     // bare; RX u16 total record count
+        const val CMD_FILE_LIST = 0x0303      // start: len=1 payload 0x00; resume: 0x00+last id
+        const val CMD_FILE_SELECT = 0x0003    // + u16 record id; selects a file before download
+        const val CMD_MEDIA_CLASS = 0x0603    // + u8 record kind byte; download media class
+        const val CMD_DOWNLOAD = 0x0503       // + u16 record id; RX 32KB chunks + len=0 terminator
+        const val CMD_REC_QUERY_403 = 0x0403  // + u16 record id; RX arg f8ff — per-record probe (thumbnail?)
+
+        const val FILE_PAGE_SIZE = 16
+        const val FILE_RECORD_SIZE = 13
+
+        private val INIT_PARAM_IDS = intArrayOf(0x9002, 0x9003, 0x9004, 0x9009, 0x0300)
     }
 
     data class Frame(val type: Int, val cmd: Int, val payload: ByteArray) {
@@ -100,6 +109,13 @@ class GpsocketClient(
     val state: SharedFlow<State> = _state
 
     private var heartbeatJob: Job? = null
+
+    /** Serializes request/response exchanges — get-param replies are positional. */
+    private val requestLock = Mutex()
+
+    /** Last settings menu document received (init or on-demand request). */
+    var lastMenuXml: String? = null
+        private set
 
     suspend fun connect() {
         if (_state.replayCache.firstOrNull() is State.Connecting ||
@@ -195,7 +211,7 @@ class GpsocketClient(
 
     suspend fun sendParamQuery(paramId: Int) {
         val args = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(paramId).array()
-        writeArgs(CMD_PARAM_QUERY, args)
+        writeArgs(CMD_GET_PARAM, args)
     }
 
     suspend fun sendTimeSync(now: LocalDateTime = LocalDateTime.now()) {
@@ -212,7 +228,11 @@ class GpsocketClient(
         writePayload(CMD_TIMESYNC, payload.array())
     }
 
-    suspend fun sendHeartbeatStatusQuery() = writeBare(CMD_HEARTBEAT)
+    private suspend fun sendAuthRound() {
+        val token = ByteArray(4)
+        SecureRandom().nextBytes(token)
+        writeArgs(CMD_AUTH_ROUND, token)
+    }
 
     /** Live-probing API: send a bare command or command+inline-args. */
     suspend fun sendRaw(cmd: Int, args: ByteArray = byteArrayOf()) {
@@ -220,20 +240,271 @@ class GpsocketClient(
         if (args.isEmpty()) writeBare(cmd) else writeArgs(cmd, args)
     }
 
+    // ---- Request/response exchanges -----------------------------------------
+    // The reply collector is subscribed BEFORE the request is sent, so no reply
+    // can be missed. requestLock serializes exchanges: get-param replies carry
+    // only the value, so queries must stay positional and uninterleaved.
+
+    /**
+     * Send [send], then collect [count] camera frames for [cmd]. Returns fewer
+     * than [count] frames on timeout.
+     */
+    private suspend fun exchange(cmd: Int, count: Int, timeoutMs: Long, send: suspend () -> Unit): List<Frame> {
+        val ch = kotlinx.coroutines.channels.Channel<Frame>(count + 8)
+        val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            _frames.collect { if (it.cmd == cmd) ch.trySend(it) }
+        }
+        return try {
+            send()
+            val out = ArrayList<Frame>(count)
+            runCatching {
+                kotlinx.coroutines.withTimeout(timeoutMs) { repeat(count) { out += ch.receive() } }
+            }
+            out
+        } finally {
+            job.cancel()
+        }
+    }
+
+    // Viidure gates feature groups behind mode commands on cmd 0x0000
+    // (+0x0400 for settings) — the camera ignores params/file ops in idle mode.
+    private suspend fun enterMode(mode: Int) {
+        writeArgs(CMD_STATUS_FLAGS, byteArrayOf(mode.toByte()))
+        delay(50)   // ack comes in ~10 ms; give the camera time to switch
+    }
+
+    private suspend fun enterSettingsMode() {
+        writeBare(CMD_MODE_400)
+        delay(30)
+        enterMode(MODE_SETTINGS)
+    }
+
+    /** Query current values for [paramIds]; replies are positional — send each
+     *  query and await its reply before the next, like Viidure does. The camera
+     *  drops back-to-back bursts. */
+    suspend fun getParams(paramIds: List<Int>, timeoutMs: Long = 1000): Map<Int, ByteArray> =
+        requestLock.withLock {
+            enterSettingsMode()
+            val out = LinkedHashMap<Int, ByteArray>(paramIds.size)
+            for (id in paramIds) {
+                val r = exchange(CMD_GET_PARAM, 1, timeoutMs) {
+                    writeArgs(CMD_GET_PARAM,
+                        ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(id).array())
+                }
+                out[id] = r.firstOrNull()?.payload ?: ByteArray(0)
+            }
+            out
+        }
+
+    /** Set an enum/u8 setting. Body: param u16 LE | 00 00 | type 0x01 | value u8. */
+    suspend fun setParam(paramId: Int, value: Int, timeoutMs: Long = 2000): Boolean =
+        requestLock.withLock {
+            enterSettingsMode()
+            val args = byteArrayOf(
+                (paramId and 0xFF).toByte(), (paramId shr 8 and 0xFF).toByte(),
+                0, 0, 0x01, (value and 0xFF).toByte()
+            )
+            exchange(CMD_SET_PARAM, 1, timeoutMs) { writeArgs(CMD_SET_PARAM, args) }.isNotEmpty()
+        }
+
+    /** Fetch the settings menu XML (chunks of ~498 B + empty terminator). */
+    suspend fun requestMenuXml(timeoutMs: Long = 5000): String = requestLock.withLock {
+        val ch = kotlinx.coroutines.channels.Channel<Frame>(64)
+        val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            _frames.collect { if (it.cmd == CMD_MENU_XML) ch.trySend(it) }
+        }
+        try {
+            writeBare(CMD_MENU_XML)
+            val sb = StringBuilder()
+            kotlinx.coroutines.withTimeout(timeoutMs) {
+                while (true) {
+                    val f = ch.receive()
+                    if (f.payload.isEmpty()) break
+                    sb.append(String(f.payload, Charsets.UTF_8))
+                }
+            }
+            sb.toString().also { lastMenuXml = it }
+        } finally {
+            job.cancel()
+        }
+    }
+
+    /** Total record count the camera advertises (u16), or null on timeout. */
+    suspend fun requestFileCount(timeoutMs: Long = 2000): Int? = requestLock.withLock {
+        exchange(CMD_FILE_COUNT, 1, timeoutMs) { writeBare(CMD_FILE_COUNT) }
+            .firstOrNull()?.let { if (it.payload.size >= 2) u16le(it.payload, 0) else null }
+    }
+
+    /**
+     * Page through the file list. Each 0x0303 page starts with 0x10 and carries
+     * up to [FILE_PAGE_SIZE] 13-byte records; the camera expects the last
+     * record's id echoed back as 0x00+id u16 to continue. Ends on a short page.
+     */
+    suspend fun listFiles(maxPages: Int = 64, timeoutMs: Long = 2000): List<CameraFile> =
+        requestLock.withLock {
+            val ch = kotlinx.coroutines.channels.Channel<Frame>(maxPages + 8)
+            val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                _frames.collect { if (it.cmd == CMD_FILE_LIST) ch.trySend(it) }
+            }
+            try {
+                enterMode(MODE_FILE_LIST)
+                writePayload(CMD_FILE_LIST, byteArrayOf(0))
+                val files = ArrayList<CameraFile>()
+                repeat(maxPages) {
+                    val page = kotlinx.coroutines.withTimeout(timeoutMs) { ch.receive() }
+                    val recs = parseFileListPage(page.payload)
+                    if (recs.isEmpty()) return@withLock files
+                    files += recs
+                    if (recs.size < FILE_PAGE_SIZE) return@withLock files
+                    val last = recs.last().id
+                    writeArgs(CMD_FILE_LIST, byteArrayOf(0, (last and 0xFF).toByte(), (last shr 8 and 0xFF).toByte()))
+                }
+                files
+            } finally {
+                job.cancel()
+            }
+        }
+
+    /** One file-list record: type tag, id, timestamp, size in KiB (verified:
+     *  size*1024 == exact bytes streamed by a download). */
+    data class CameraFile(val kind: Int, val id: Int, val timestamp: LocalDateTime?, val size: Long) {
+        val kindChar: Char get() = kind.toChar()
+        val sizeBytes: Long get() = size * 1024
+        override fun toString(): String =
+            "%c id=0x%04x %s size=%dKiB".format(kindChar, id, timestamp ?: "?", size)
+    }
+
+    sealed class DownloadResult {
+        data class Success(val bytes: Long) : DownloadResult()
+        /** Camera answered feff: file not selectable (stale id, or selection expired). */
+        data object Refused : DownloadResult()
+        data class Incomplete(val bytes: Long, val expected: Long) : DownloadResult()
+        data class Failed(val reason: String) : DownloadResult()
+    }
+
+    /**
+     * Download a recording. Verified wire sequence (Oct-6 pcap):
+     *   0x0400 → 0x0003 +id → 0x0603 +kind → 0x0503 +id
+     *   → camera streams len-prefixed 0x0503 chunks (~32 KiB) until a len=0
+     *   terminator; total == record.size*1024. No per-chunk acks exist.
+     * The steps must run back-to-back — a 24 s gap between select and request
+     * made the camera answer feff in the capture. Payload is a RIFF AVI.
+     */
+    suspend fun downloadFile(
+        file: CameraFile,
+        out: java.io.OutputStream,
+        timeoutMs: Long = 10_000,
+        onProgress: (received: Long, total: Long) -> Unit = { _, _ -> }
+    ): DownloadResult = requestLock.withLock {
+        heartbeatJob?.cancel()   // Viidure sends no keepalives mid-transfer
+        val ch = kotlinx.coroutines.channels.Channel<Frame>(64)
+        val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            _frames.collect {
+                if (it.cmd == CMD_FILE_SELECT || it.cmd == CMD_MEDIA_CLASS || it.cmd == CMD_DOWNLOAD)
+                    ch.trySend(it)
+            }
+        }
+        try {
+            val idArgs = byteArrayOf(
+                (file.id and 0xFF).toByte(), (file.id shr 8 and 0xFF).toByte())
+            writeBare(CMD_MODE_400)
+            writeArgs(CMD_FILE_SELECT, idArgs)
+            if (awaitCmd(ch, CMD_FILE_SELECT, timeoutMs) == null) {
+                return@withLock DownloadResult.Failed("no select ack")
+            }
+            writeArgs(CMD_MEDIA_CLASS, byteArrayOf(file.kind.toByte()))
+            if (awaitCmd(ch, CMD_MEDIA_CLASS, timeoutMs) == null) {
+                return@withLock DownloadResult.Failed("no media-class ack")
+            }
+            writeArgs(CMD_DOWNLOAD, idArgs)
+
+            val expected = file.sizeBytes
+            var received = 0L
+            var result: DownloadResult = DownloadResult.Incomplete(0, expected)
+            while (true) {
+                val f = runCatching {
+                    kotlinx.coroutines.withTimeout(timeoutMs) { ch.receive() }
+                }.getOrNull() ?: break   // stall -> Incomplete
+                if (f.type == 3) {   // feff arg = refused
+                    result = DownloadResult.Refused
+                    break
+                }
+                if (f.payload.isEmpty()) {   // len=0 terminator
+                    result = if (received == 0L) DownloadResult.Refused
+                             else DownloadResult.Success(received)
+                    break
+                }
+                out.write(f.payload)
+                received += f.payload.size
+                onProgress(received, expected)
+                result = DownloadResult.Incomplete(received, expected)
+                if (received >= expected) {
+                    result = DownloadResult.Success(received)
+                    break
+                }
+            }
+            result
+        } finally {
+            out.flush()
+            job.cancel()
+            startHeartbeat()
+        }
+    }
+
+    private suspend fun awaitCmd(
+        ch: kotlinx.coroutines.channels.Channel<Frame>, cmd: Int, timeoutMs: Long
+    ): Frame? = runCatching {
+        kotlinx.coroutines.withTimeout<Frame>(timeoutMs) {
+            while (true) {
+                val f = ch.receive()
+                if (f.cmd == cmd) return@withTimeout f
+            }
+            error("unreachable")
+        }
+    }.getOrNull()
+
+    fun parseFileListPage(payload: ByteArray): List<CameraFile> {
+        if (payload.isEmpty() || payload[0] != 0x10.toByte()) return emptyList()
+        val out = ArrayList<CameraFile>()
+        var i = 1
+        while (i + FILE_RECORD_SIZE <= payload.size) {
+            val kind = payload[i].toInt() and 0xFF
+            val id = u16le(payload, i + 1)
+            val ts = runCatching {
+                LocalDateTime.of(
+                    2000 + (payload[i + 3].toInt() and 0xFF),
+                    payload[i + 4].toInt() and 0xFF,
+                    payload[i + 5].toInt() and 0xFF,
+                    payload[i + 6].toInt() and 0xFF,
+                    payload[i + 7].toInt() and 0xFF,
+                    payload[i + 8].toInt() and 0xFF
+                )
+            }.getOrNull()
+            out += CameraFile(kind, id, ts, u32le(payload, i + 9))
+            i += FILE_RECORD_SIZE
+        }
+        return out
+    }
+
     // ---- Session lifecycle -------------------------------------------------
 
     private suspend fun runInitSequence() {
         sendLogin()
-        for (id in INIT_PARAM_IDS) sendParamQuery(id)
-        writeBare(CMD_PRE_TIMESYNC)
+        delay(600)      // the login reply took ~550 ms in the pcap
+        writeBare(CMD_KEEPALIVE)
+        for (id in INIT_PARAM_IDS) {
+            sendParamQuery(id)
+            delay(20)   // Viidure paces queries by awaiting each reply
+        }
+        runCatching { requestMenuXml() }   // also caches into lastMenuXml
         sendTimeSync()
         writeBare(CMD_KEEPALIVE)
-        writeArgs(CMD_STATUS_FLAGS, byteArrayOf(0x00))
-        writeArgs(CMD_UNKNOWN_800, byteArrayOf(0x00))
-        writeBare(CMD_PARAM_QUERY)
-        writeBare(CMD_UNKNOWN_001)
-        writeArgs(CMD_STATUS_FLAGS, byteArrayOf(0x02))
-        writeBare(CMD_UNKNOWN_203)
+        sendParamQuery(0x9006)
+        sendAuthRound()
+        delay(30)
+        writeArgs(CMD_STATUS_FLAGS, byteArrayOf(MODE_IDLE.toByte()))
+        writeBare(CMD_SESSION_001)
+        writeArgs(CMD_SESSION_800, byteArrayOf(0x00))
     }
 
     private fun startHeartbeat() {
@@ -289,6 +560,14 @@ class GpsocketClient(
             }
             val type = u16le(data, idx + 8)
             val cmd = u16le(data, idx + 10)
+            if (type == 3) {
+                val frame = Frame(type, cmd, data.copyOfRange(idx + 12, idx + 14))
+                _frames.emit(frame)
+                Log.d("GPSOCKET", "RX cmd=0x%04x type=3 arg=%s".format(cmd,
+                    frame.payload.joinToString("") { "%02x".format(it.toInt() and 0xFF) }))
+                pos = idx + 14
+                continue
+            }
             val len = u16le(data, idx + 12)
             if (data.size - idx < 14 + len) {
                 buf.reset()
@@ -315,4 +594,10 @@ class GpsocketClient(
 
     private fun u16le(data: ByteArray, off: Int): Int =
         (data[off].toInt() and 0xFF) or ((data[off + 1].toInt() and 0xFF) shl 8)
+
+    private fun u32le(data: ByteArray, off: Int): Long =
+        (data[off].toLong() and 0xFF) or
+            ((data[off + 1].toLong() and 0xFF) shl 8) or
+            ((data[off + 2].toLong() and 0xFF) shl 16) or
+            ((data[off + 3].toLong() and 0xFF) shl 24)
 }
