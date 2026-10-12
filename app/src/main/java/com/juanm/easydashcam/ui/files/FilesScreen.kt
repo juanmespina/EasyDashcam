@@ -19,19 +19,26 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Forward10
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -94,6 +101,7 @@ private fun FilesList(vm: CameraViewModel) {
     val localFiles by vm.localFiles.collectAsStateWithLifecycle()
     var playing by remember { mutableStateOf<Uri?>(null) }
     var deleteCandidate by remember { mutableStateOf<Uri?>(null) }
+    var gridView by remember { mutableStateOf(false) }
 
     var pendingNotif by remember { mutableStateOf<GpsocketClient.CameraFile?>(null) }
     var pendingBatch by remember { mutableStateOf(false) }
@@ -156,11 +164,34 @@ private fun FilesList(vm: CameraViewModel) {
         LaunchedEffect(batchTrigger) {
             if (batchTrigger > 0) pending.forEach(vm::download)
         }
-        if (pending.isNotEmpty()) {
-            TextButton(
-                onClick = startBatch,
-                modifier = Modifier.align(Alignment.End).padding(end = 16.dp)
-            ) { Text("Download all (${pending.size})") }
+        // Loop clips are back-to-back: a record's duration ≈ the gap to the
+        // next-newer record of the same kind. Absent for photos, the newest
+        // file, and boundary gaps that are too large to be loop neighbours.
+        val durations = remember(list) {
+            val m = HashMap<Int, Int>()
+            list.orEmpty().zipWithNext().forEach { (newer, older) ->
+                if (newer.kindChar == older.kindChar &&
+                    newer.timestamp != null && older.timestamp != null) {
+                    val gap = java.time.Duration
+                        .between(older.timestamp, newer.timestamp).seconds
+                    if (gap in 30..900) m[older.uniqueId] = gap.toInt()
+                }
+            }
+            m
+        }
+        Row(
+            Modifier.align(Alignment.End).padding(end = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (pending.isNotEmpty()) {
+                TextButton(onClick = startBatch) { Text("Download all (${pending.size})") }
+            }
+            IconButton(onClick = { gridView = !gridView }) {
+                Icon(
+                    if (gridView) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView,
+                    contentDescription = if (gridView) "List view" else "Grid view"
+                )
+            }
         }
     PullToRefreshBox(
         isRefreshing = loading,
@@ -168,42 +199,70 @@ private fun FilesList(vm: CameraViewModel) {
         modifier = Modifier.fillMaxSize().weight(1f)
     ) {
         when {
+            // PullToRefreshBox already shows its indicator while loading —
+            // a second centered spinner made tab switches flash twice.
             list == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
+                if (!loading) Text("Pull down to refresh")
             }
             list.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("No recordings on the camera")
             }
             else -> {
                 val grouped = list.groupBy { it.timestamp?.toLocalDate() }
-                LazyColumn(Modifier.fillMaxSize()) {
-                    grouped.forEach { (day, dayFiles) ->
-                        item(key = "h$day") { DayHeader(day) }
-                        itemsIndexed(
-                            dayFiles,
-                            key = { i, f -> "${f.uniqueId}_${f.timestamp}_$i" }
-                        ) { _, f ->
-                            val uri = localFiles[f.uniqueId]
-                            FileRow(
-                                file = f,
-                                download = downloads[f.uniqueId],
-                                local = uri != null,
-                                onDownload = { startDownload(f) },
-                                onPlay = uri?.let { { playing = it } },
-                                onLongPress = uri?.let { { deleteCandidate = it } }
-                            )
-                            HorizontalDivider()
+                if (gridView) {
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(minSize = 170.dp),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        grouped.forEach { (day, dayFiles) ->
+                            item(key = "h$day", span = { GridItemSpan(maxLineSpan) }) {
+                                DayHeader(day)
+                            }
+                            itemsIndexed(
+                                dayFiles,
+                                key = { i, f -> "${f.uniqueId}_${f.timestamp}_$i" }
+                            ) { _, f ->
+                                val uri = localFiles[f.uniqueId]
+                                FileTile(
+                                    file = f,
+                                    download = downloads[f.uniqueId],
+                                    durationSec = durations[f.uniqueId],
+                                    local = uri != null,
+                                    onDownload = { startDownload(f) },
+                                    onPlay = uri?.let { { playing = it } },
+                                    onLongPress = uri?.let { { deleteCandidate = it } }
+                                )
+                            }
+                        }
+                        if (lockedCount > 0) {
+                            item(key = "locked_footer", span = { GridItemSpan(maxLineSpan) }) {
+                                LockedFooter(lockedCount)
+                            }
                         }
                     }
-                    if (lockedCount > 0) {
-                        item(key = "locked_footer") {
-                            Text(
-                                "$lockedCount protected clip(s) hidden — " +
-                                    "the camera refuses to serve locked files",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(16.dp)
-                            )
+                } else {
+                    LazyColumn(Modifier.fillMaxSize()) {
+                        grouped.forEach { (day, dayFiles) ->
+                            item(key = "h$day") { DayHeader(day) }
+                            itemsIndexed(
+                                dayFiles,
+                                key = { i, f -> "${f.uniqueId}_${f.timestamp}_$i" }
+                            ) { _, f ->
+                                val uri = localFiles[f.uniqueId]
+                                FileRow(
+                                    file = f,
+                                    download = downloads[f.uniqueId],
+                                    durationSec = durations[f.uniqueId],
+                                    local = uri != null,
+                                    onDownload = { startDownload(f) },
+                                    onPlay = uri?.let { { playing = it } },
+                                    onLongPress = uri?.let { { deleteCandidate = it } }
+                                )
+                                HorizontalDivider()
+                            }
+                        }
+                        if (lockedCount > 0) {
+                            item(key = "locked_footer") { LockedFooter(lockedCount) }
                         }
                     }
                 }
@@ -246,43 +305,108 @@ private fun DayHeader(day: LocalDate?) {
     )
 }
 
+private fun kindOf(f: GpsocketClient.CameraFile) = when (f.kindChar) {
+    'L' -> Icons.Default.Lock to "Locked"
+    'J' -> Icons.Default.Photo to "Photo"
+    else -> Icons.Default.Videocam to "Video"
+}
+
+private fun fileDetail(
+    file: GpsocketClient.CameraFile,
+    durationSec: Int?,
+    download: CameraSession.DownloadState?,
+    local: Boolean
+): String {
+    // The camera feff-refuses records it is still writing — flag rows that
+    // fresh so a refusal doesn't look like a broken download.
+    val stillRecording = file.timestamp?.let {
+        kotlin.math.abs(java.time.Duration.between(it, java.time.LocalDateTime.now()).toMinutes()) < 3
+    } == true
+    return buildString {
+        append("%s · %.1f MB".format(kindOf(file).second, file.size / 1024f))
+        durationSec?.let { append(" · ~%dm %02ds".format(it / 60, it % 60)) }
+        download?.takeIf { !it.done }?.etaSec?.let { append(" · ~%ds left".format(it)) }
+        if (stillRecording) append(" · still recording?")
+        if (local) append(" · downloaded")
+    }
+}
+
+@Composable
+private fun LockedFooter(count: Int) {
+    Text(
+        "$count protected clip(s) hidden — the camera refuses to serve locked files",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(16.dp)
+    )
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FileRow(
     file: GpsocketClient.CameraFile,
     download: CameraSession.DownloadState?,
+    durationSec: Int?,
     local: Boolean,
     onDownload: () -> Unit,
     onPlay: (() -> Unit)?,
     onLongPress: (() -> Unit)? = null,
 ) {
-    val (icon, kindLabel) = when (file.kindChar) {
-        'L' -> Icons.Default.Lock to "Locked"
-        'J' -> Icons.Default.Photo to "Photo"
-        else -> Icons.Default.Videocam to "Video"
-    }
+    val (icon, kindLabel) = kindOf(file)
     ListItem(
         leadingContent = { Icon(icon, contentDescription = kindLabel) },
         headlineContent = {
             Text(file.timestamp?.format(DateTimeFormatter.ofPattern("HH:mm:ss")) ?: "id 0x%04x".format(file.id))
         },
-        supportingContent = {
-            // The camera feff-refuses records it is still writing — flag rows
-            // that fresh so a refusal doesn't look like a broken download.
-            val stillRecording = file.timestamp?.let {
-                kotlin.math.abs(java.time.Duration.between(it, java.time.LocalDateTime.now()).toMinutes()) < 3
-            } == true
-            Text(
-                "$kindLabel · ${"%.1f".format(file.size / 1024f)} MB" +
-                    (if (stillRecording) " · still recording?" else "") +
-                    (if (local) " · downloaded" else "")
-            )
-        },
+        supportingContent = { Text(fileDetail(file, durationSec, download, local)) },
         trailingContent = { DownloadTrailing(download, local, onDownload, onPlay) },
         modifier = if (onLongPress != null)
             Modifier.combinedClickable(onClick = {}, onLongClick = onLongPress)
         else Modifier
     )
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun FileTile(
+    file: GpsocketClient.CameraFile,
+    download: CameraSession.DownloadState?,
+    durationSec: Int?,
+    local: Boolean,
+    onDownload: () -> Unit,
+    onPlay: (() -> Unit)?,
+    onLongPress: (() -> Unit)?,
+) {
+    val (icon, kindLabel) = kindOf(file)
+    Card(
+        Modifier.padding(4.dp).then(
+            if (onPlay != null || onLongPress != null)
+                Modifier.combinedClickable(
+                    onClick = { onPlay?.invoke() },
+                    onLongClick = { onLongPress?.invoke() })
+            else Modifier
+        )
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(icon, contentDescription = kindLabel, modifier = Modifier.size(18.dp))
+                Text(
+                    file.timestamp?.format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+                        ?: "id 0x%04x".format(file.id),
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.padding(start = 6.dp)
+                )
+            }
+            Text(
+                fileDetail(file, durationSec, download, local),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Box(Modifier.align(Alignment.End)) {
+                DownloadTrailing(download, local, onDownload, onPlay)
+            }
+        }
+    }
 }
 
 @Composable
