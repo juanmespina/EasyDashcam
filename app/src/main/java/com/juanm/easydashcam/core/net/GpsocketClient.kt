@@ -176,6 +176,8 @@ class GpsocketClient(
     }
 
     private suspend fun writeBare(cmd: Int) {
+        if (cmd != CMD_KEEPALIVE)   // heartbeats would drown the log buffer
+            Log.d("GPSOCKET", "TX cmd=0x%04x bare".format(cmd))
         val frame = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN)
         frame.put(MAGIC)
         putU16(frame, TYPE_REQUEST)
@@ -184,6 +186,8 @@ class GpsocketClient(
     }
 
     private suspend fun writeArgs(cmd: Int, args: ByteArray) {
+        Log.d("GPSOCKET", "TX cmd=0x%04x args=%s".format(cmd,
+            args.joinToString("") { "%02x".format(it.toInt() and 0xFF) }))
         val frame = ByteBuffer.allocate(12 + args.size).order(ByteOrder.LITTLE_ENDIAN)
         frame.put(MAGIC)
         putU16(frame, TYPE_REQUEST)
@@ -425,15 +429,24 @@ class GpsocketClient(
         try {
             val idArgs = byteArrayOf(
                 (file.id and 0xFF).toByte(), (file.id shr 8 and 0xFF).toByte())
+            // Restore file mode — Live leaves the session in preview (0x01)
+            // and Settings in 0x03, and the camera feffs 0x0003/0x0503 from
+            // the wrong mode. listFiles used to leave 0x02 behind by luck.
+            enterMode(MODE_FILE_LIST)
             writeBare(CMD_MODE_400)
+            // Viidure paces these steps ~1 s apart; a 150 ms burst works on
+            // some states but the camera feffs 0x0503 on others.
+            delay(800)
             writeArgs(CMD_FILE_SELECT, idArgs)
             if (awaitCmd(ch, CMD_FILE_SELECT, timeoutMs) == null) {
                 return@withLock DownloadResult.Failed("no select ack")
             }
+            delay(800)
             writeArgs(CMD_MEDIA_CLASS, byteArrayOf(file.kind.toByte()))
             if (awaitCmd(ch, CMD_MEDIA_CLASS, timeoutMs) == null) {
                 return@withLock DownloadResult.Failed("no media-class ack")
             }
+            delay(800)
             writeArgs(CMD_DOWNLOAD, idArgs)
 
             val expected = file.sizeBytes
@@ -594,8 +607,9 @@ class GpsocketClient(
             }
             val frame = Frame(type, cmd, data.copyOfRange(idx + 14, idx + 14 + len))
             _frames.emit(frame)
-            Log.d("GPSOCKET", "RX cmd=0x%04x type=%d len=%d %s".format(cmd, type, len,
-                frame.payload.joinToString("") { "%02x".format(it.toInt() and 0xFF) }))
+            if (cmd != CMD_KEEPALIVE)   // heartbeats would drown the log buffer
+                Log.d("GPSOCKET", "RX cmd=0x%04x type=%d len=%d %s".format(cmd, type, len,
+                    frame.payload.joinToString("") { "%02x".format(it.toInt() and 0xFF) }))
             pos = idx + 14 + len
         }
         buf.reset()
