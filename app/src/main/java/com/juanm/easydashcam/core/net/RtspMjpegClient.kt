@@ -30,6 +30,7 @@ class RtspMjpegClient(
     private var ctrl: Socket? = null
     private var rtp: DatagramSocket? = null
     private var rtcp: DatagramSocket? = null
+    private val extraSockets = ArrayList<DatagramSocket>()   // audio track sockets
     private var sessionId: String? = null
     private var cseq = 0
 
@@ -42,21 +43,27 @@ class RtspMjpegClient(
      */
     suspend fun run(onFrame: (Bitmap) -> Unit) = withContext(Dispatchers.IO) {
         val base = "rtsp://$host:$port$path"
-        val s = Socket(host, port).also {
-            it.soTimeout = 8000
-            ctrl = it
-        }
-        val rd = BufferedReader(InputStreamReader(s.getInputStream(), Charsets.US_ASCII))
-        val wr = s.getOutputStream()
 
-        fun request(method: String, url: String, extra: String = ""): Map<String, String> {
+        // The firmware only allows one RTSP session and answers TEARDOWN with
+        // "501 Not Implemented" — after a leave/re-enter it may still hold the
+        // old session and 404 the new SETUP. Retry the whole handshake.
+        var rd: BufferedReader? = null
+        var wr: java.io.OutputStream? = null
+        var lastError: Exception? = null
+        var handshakeOk = false
+
+        fun request(rd: BufferedReader, wr: java.io.OutputStream,
+                    method: String, url: String, extra: String = ""): Map<String, String> {
             cseq++
+            // User-Agent matches Viidure's FFmpeg client — cheap firmware is
+            // known to gate on it.
             val req = "$method $url RTSP/1.0\r\nCSeq: $cseq\r\n" +
+                "User-Agent: Lavf58.12.100\r\n" +
                 (sessionId?.let { "Session: $it\r\n" } ?: "") + extra + "\r\n"
             wr.write(req.toByteArray(Charsets.US_ASCII))
             wr.flush()
             val status = rd.readLine() ?: throw RtspException("no reply to $method")
-            Log.d("RTSP", "$method -> $status")
+            Log.i("RTSP", "$method -> $status")
             if (!status.contains(" 200")) throw RtspException("$method: $status")
             val headers = linkedMapOf<String, String>()
             while (true) {
@@ -71,43 +78,71 @@ class RtspMjpegClient(
             return headers
         }
 
-        request("OPTIONS", base)
-        val desc = request("DESCRIBE", base, "Accept: application/sdp\r\n")
-        val sdp = desc["#body"] ?: throw RtspException("no SDP in DESCRIBE")
-        val track = Regex("""a=control:(\S+)""").find(sdp)?.groupValues?.get(1)
-            ?: throw RtspException("SDP has no track")
+        var setup: Map<String, String> = emptyMap()
+        var rtpSock: DatagramSocket? = null
+        var rtcpSock: DatagramSocket? = null
+        for (attempt in 1..3) {
+            try {
+                cseq = 0   // Viidure restarts at 1 per session; the firmware may
+                           // reject out-of-sequence cseq on a fresh TCP conn
+                val s = Socket(host, port).also { it.soTimeout = 8000; ctrl = it }
+                rd = BufferedReader(InputStreamReader(s.getInputStream(), Charsets.US_ASCII))
+                wr = s.getOutputStream()
+                request(rd!!, wr!!, "OPTIONS", base)
+                val desc = request(rd!!, wr!!, "DESCRIBE", base, "Accept: application/sdp\r\n")
+                val sdp = desc["#body"] ?: throw RtspException("no SDP in DESCRIBE")
+                Log.i("RTSP", "SDP: ${sdp.replace('\n', ' ').take(300)}")
+                val tracks = Regex("""a=control:(\S+)""").findAll(sdp)
+                    .map { it.groupValues[1] }.toList()
+                if (tracks.isEmpty()) throw RtspException("SDP has no track")
 
-        // Two adjacent UDP sockets: RTP + RTCP, announced in SETUP.
-        val rtpSock = DatagramSocket(0).also { it.soTimeout = 8000; rtp = it }
-        val rtcpSock = try { DatagramSocket(rtpSock.localPort + 1) } catch (_: Exception) { DatagramSocket(0) }
-        rtcpSock.soTimeout = 8000
-        rtcp = rtcpSock
-        val setup = request(
-            "SETUP", "$base/$track",
-            "Transport: RTP/AVP/UDP;unicast;client_port=${rtpSock.localPort}-${rtcpSock.localPort}\r\n"
-        )
-        sessionId = setup["session"]?.substringBefore(';')
+                // Viidure SETUPs every advertised track (video + audio) before
+                // PLAY — replicate it; audio packets land on sockets we keep
+                // open but never read.
+                tracks.forEachIndexed { i, track ->
+                    val rs = DatagramSocket(0).also { it.soTimeout = 8000 }
+                    val cs = try { DatagramSocket(rs.localPort + 1) } catch (_: Exception) { DatagramSocket(0) }
+                    cs.soTimeout = 8000
+                    setup = request(
+                        rd!!, wr!!, "SETUP", "$base/$track",
+                        "Transport: RTP/AVP/UDP;unicast;client_port=${rs.localPort}-${cs.localPort}\r\n"
+                    )
+                    sessionId = setup["session"]?.substringBefore(';')
+                    if (i == 0) { rtpSock = rs; rtcpSock = cs; rtp = rs; rtcp = cs }
+                    else { extraSockets += rs; extraSockets += cs }
+                }
+                request(rd!!, wr!!, "PLAY", "$base/", "Range: npt=0.000-\r\n")
+                handshakeOk = true
+                break
+            } catch (e: Exception) {
+                lastError = e
+                Log.i("RTSP", "attempt $attempt failed: ${e.message}")
+                runCatching { ctrl?.close() }; ctrl = null
+                stop()
+                if (attempt < 3) delay(2000)
+            }
+        }
+        if (!handshakeOk) throw RtspException(lastError?.message ?: "handshake failed")
+        Log.i("RTSP", "PLAY ok, waiting for RTP on :${rtpSock!!.localPort}")
+
         val cam = InetAddress.getByName(host)
         val serverRtp = setup["transport"]?.let {
             Regex("""server_port=(\d+)""").find(it)?.groupValues?.get(1)?.toInt()
         }
-
         // Viidure pings the server ports right after SETUP — likely so the
         // firmware learns our reachable socket. Cheap to replicate.
         serverRtp?.let {
             runCatching {
-                rtpSock.send(DatagramPacket(byteArrayOf(0, 0, 0, 0, 0, 0), 6, cam, it))
-                rtcpSock.send(DatagramPacket(byteArrayOf(0, 0, 0, 0, 0), 5, cam, it + 1))
+                rtpSock!!.send(DatagramPacket(byteArrayOf(0, 0, 0, 0, 0, 0), 6, cam, it))
+                rtcpSock!!.send(DatagramPacket(byteArrayOf(0, 0, 0, 0, 0), 5, cam, it + 1))
             }
         }
-        request("PLAY", "$base/", "Range: npt=0.000-\r\n")
-        Log.d("RTSP", "PLAY ok, waiting for RTP on :${rtpSock.localPort}")
 
         // Keep the session alive; the camera accepts OPTIONS anytime.
         val keepalive = launch {
             while (isActive) {
                 delay(20_000)
-                runCatching { request("OPTIONS", base) }
+                runCatching { request(rd!!, wr!!, "OPTIONS", base) }
             }
         }
 
@@ -117,7 +152,7 @@ class RtspMjpegClient(
             var end = 0
             val pkt = DatagramPacket(ByteArray(65535), 65535)
             while (isActive) {
-                rtpSock.receive(pkt)
+                rtpSock!!.receive(pkt)
                 val d = pkt.data
                 val off = pkt.offset
                 if (pkt.length < 12 + 8) continue
@@ -158,17 +193,28 @@ class RtspMjpegClient(
             }
         } finally {
             keepalive.cancel()
-            runCatching { request("TEARDOWN", "$base/") }
+            // TEARDOWN must go out before ctrl is closed — otherwise the camera
+            // keeps a stale session and 404s the next SETUP.
+            runCatching { rd?.let { request(it, wr!!, "TEARDOWN", "$base/") } }
             close()
         }
         Unit
     }
 
-    fun close() {
-        runCatching { ctrl?.close() }
+    /** Close only the media sockets — unblocks receive() so run() can send a
+     *  clean TEARDOWN and finish. Called on ON_STOP/dispose. */
+    fun stop() {
         runCatching { rtp?.close() }
         runCatching { rtcp?.close() }
-        ctrl = null; rtp = null; rtcp = null
+        extraSockets.forEach { runCatching { it.close() } }
+        extraSockets.clear()
+        rtp = null; rtcp = null
+    }
+
+    fun close() {
+        stop()
+        runCatching { ctrl?.close() }
+        ctrl = null
     }
 
     private companion object {
