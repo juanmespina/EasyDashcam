@@ -69,7 +69,6 @@ class DownloadService : Service() {
     private lateinit var session: CameraSession
     private lateinit var nm: NotificationManager
     private var worker = false
-    private var activeId = -1
 
     override fun onCreate() {
         super.onCreate()
@@ -118,10 +117,8 @@ class DownloadService : Service() {
                     val f = kotlinx.coroutines.withTimeoutOrNull(IDLE_SHUTDOWN_MS) {
                         queue.receive()
                     } ?: break
-                    activeId = f.uniqueId
                     if (f.uniqueId in cancelled) { finishFile(f.uniqueId, error = "cancelled"); continue }
                     downloadOne(f)
-                    activeId = -1
                 }
             } finally {
                 wakeLock.release()
