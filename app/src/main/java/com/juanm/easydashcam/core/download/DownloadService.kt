@@ -14,6 +14,7 @@ import android.os.Environment
 import android.os.IBinder
 import android.os.PowerManager
 import android.provider.MediaStore
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.juanm.easydashcam.EasyDashcamApp
 import com.juanm.easydashcam.core.net.GpsocketClient
@@ -43,6 +44,8 @@ class DownloadService : Service() {
         private const val EXTRA_SIZE = "size"
         private const val CHANNEL_ID = "downloads"
         private const val NOTIF_ID = 1
+        private const val NOTIF_RESULT_ID = 2
+        private const val IDLE_SHUTDOWN_MS = 10_000L
 
         fun downloadIntent(context: Context, f: GpsocketClient.CameraFile) =
             Intent(context, DownloadService::class.java).apply {
@@ -105,10 +108,16 @@ class DownloadService : Service() {
         wakeLock.acquire(60 * 60 * 1000L)
         scope.launch {
             try {
-                for (f in queue) {
+                while (true) {
+                    // Idle-timeout: shut down when the queue stays empty, so the
+                    // foreground notification doesn't linger forever.
+                    val f = kotlinx.coroutines.withTimeoutOrNull(IDLE_SHUTDOWN_MS) {
+                        queue.receive()
+                    } ?: break
                     activeId = f.uniqueId
                     if (f.uniqueId in cancelled) { finishFile(f.uniqueId, error = "cancelled"); continue }
                     downloadOne(f)
+                    activeId = -1
                 }
             } finally {
                 wakeLock.release()
@@ -177,6 +186,11 @@ class DownloadService : Service() {
         session.updateDownload(
             id, CameraSession.DownloadState(prev?.received ?: 0, prev?.total ?: 0, done = true, error = error)
         )
+        // Result goes on a separate id — the foreground notification is
+        // removed with the service and would take the result with it.
+        nm.notify(NOTIF_RESULT_ID, notification(
+            if (error == null) "Download complete" else "Download failed: $error"))
+        Log.i("GPSOCKET", "download %04x -> %s".format(id ushr 8, error ?: "done"))
     }
 
     private fun failFile(uri: Uri?, fallback: File?, id: Int, error: String) {
