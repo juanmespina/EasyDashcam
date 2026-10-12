@@ -80,7 +80,7 @@ Camera is `192.168.100.1`. Two services, both plaintext TCP:
 | Port | Protocol | Web-world equivalent |
 |---|---|---|
 | 8081 | GPSOCKET (custom binary) | a persistent connection speaking a private request/response protocol — think WebSocket, but raw bytes instead of JSON |
-| 8080 | RTSP | live video stream, an industry standard; we hand the URL to ExoPlayer |
+| 8080 | RTSP | live video stream, an industry standard; we run it ourselves in `RtspMjpegClient` (§3.7) — ExoPlayer rejects this stream |
 
 There is no HTTP, no TLS, and no JSON anywhere — the firmware speaks one binary format, described below. Everything we know came from **pcaps** (packet captures of the Viidure app talking to the camera — the equivalent of proxying an app's HTTP traffic and reading it).
 
@@ -150,7 +150,9 @@ Facts that matter when implementing:
 - **No per-chunk acks.** TCP does the flow control; the camera pours bytes until EOF.
 - **The selection expires.** In the pcap, a 24 s gap between `0x0003` and `0x0503` got `feff` (refused). Run the four steps back-to-back — treat the selection like a short-lived token. This is the likely reason Viidure's downloads sometimes fail for no visible reason.
 - **Payload is RIFF AVI** (Motion JPEG). First bytes are literally `RIFF....AVI`; photos arrive as a single `AVI1`-marked JPEG frame.
-- **The phone goes quiet during transfer.** Viidure sends no keepalives mid-download, so `downloadFile()` suspends our heartbeat too.
+- **The phone goes quiet during transfer** in Viidure's captures. We keep our keepalive running — verified harmless on this firmware.
+- **Restore file mode first.** The sequence only works in mode `0x02`; after visiting Live or Settings the same bytes get `feff`'d. `downloadFile()` re-enters the mode and paces the steps ~800 ms apart (Viidure waits ~1–3 s; a ~150 ms burst races the camera).
+- **`feff` on a recent record = still writing.** The camera refuses the file it is currently recording; older records stream fine.
 - **Throughput** is ~500 KiB/s — the camera's Wi-Fi is the bottleneck; nothing we send makes it faster.
 
 ### 3.5 The traps that cost us real debugging time
@@ -164,6 +166,14 @@ Facts that matter when implementing:
 ### 3.6 What the client does with all this
 
 `GpsocketClient` encodes frames (`writeBare`/`writeArgs`/`writePayload`), replays the observed session-init (login → param gets → menu XML → time-sync → auth → session flags), maintains the `0x0100` keepalive, and **parses the camera's stream** by scanning for the magic, reading the declared length, and emitting `Frame(type, cmd, payload)` events. Request/response calls (`getParams`, `setParam`, `requestMenuXml`, `listFiles`, `downloadFile`) subscribe to replies *before* sending, under `requestLock`, so positional replies can't interleave or be missed.
+
+### 3.7 The RTSP side (live preview)
+
+`rtsp://192.168.100.1:8080/?action=stream` carries MJPEG video (RTP payload type 26) + L16 audio over UDP. Three firmware quirks shape `RtspMjpegClient`:
+
+1. **ExoPlayer can't play it** — media3's RTSP module has no decoder for static payload type 26 (`Unsupported static paylod type 26`). We do the handshake over a plain socket and reassemble JPEG frames from RTP fragments (RFC 2435), one `BitmapFactory.decodeByteArray` per frame.
+2. **The handshake must look like Viidure's FFmpeg client**: `CSeq` restarts at 1 per connection, `User-Agent: Lavf58.12.100`, and a SETUP for *every* SDP track (video `track0` **and** audio `track1`) before PLAY. A track0-only SETUP gets `404` on this firmware.
+3. **One session, no teardown.** The camera answers `TEARDOWN` with `501` and holds roughly one session. Leaving Live also drops GPSOCKET to mode `0x00` (`exitPreviewMode`) — that's what actually frees the session for the next `SETUP`.
 
 ---
 
@@ -203,7 +213,8 @@ Java for the build comes from Android Studio's bundled **JBR 21** (`JAVA_HOME`),
 - `.../core/net/GpsocketClient.kt` — the protocol engine (§3, §2's fix lives here)
 - `.../core/net/CameraNetworkBinder.kt` — Wi-Fi binding (§5)
 - `app/src/main/AndroidManifest.xml` — declared permissions (internet, network state, foreground download service prep)
-- `build.gradle.kts` (*app*) — dependencies: Compose, Material 3, Media3 ExoPlayer (+ RTSP, for later), OkHttp, coroutines
+- `build.gradle.kts` (*app*) — dependencies: Compose, Material 3, Media3 ExoPlayer, OkHttp, coroutines (RTSP/AVI playback are hand-rolled — see §3.7)
+- `app/src/test/.../AviMjpegPlayerTest.kt` — JVM unit tests for the AVI indexer
 - `tools/` — deploy/diagnostic scripts used by the dev loop (§6)
 
 ---
@@ -218,7 +229,7 @@ Java for the build comes from Android Studio's bundled **JBR 21** (`JAVA_HOME`),
 - **Frame (GPSOCKET)** — one command packet: magic + type + command id + optional payload
 - **Hotspot / AP** — Wi-Fi created *by the camera*; your phone joins as a client
 - **Little-endian** — multi-byte numbers sent least-significant-byte first (`0x9002` → bytes `02 90`); the opposite of normal network byte order
-- **MJPEG over RTSP** — the live-video stream format; a sequence of JPEG photos; plays in VLC/ExoPlayer
+- **MJPEG over RTSP** — the live-video stream format; a sequence of JPEG photos; plays in VLC, but not ExoPlayer (payload type 26 unsupported) — `RtspMjpegClient` handles it
 - **MVVM** — UI (View) ↔ ViewModel (state/logic) ↔ Model (data/network); UI never opens sockets
 - **pcap** — packet-capture file; how we reverse-engineered the protocol (Wireshark/PCAPdroid)
 - **RIFF / AVI** — Microsoft's media container format; recordings download as Motion-JPEG AVI files (`RIFF` magic on the first bytes)
