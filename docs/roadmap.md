@@ -37,7 +37,7 @@ no more reverse engineering is required to ship.
 - Stream lifecycle tied to `Lifecycle.State.STARTED` — stops in background.
 - **Done when:** live MJPEG video plays full-screen on the camera hotspot. ✓
 
-## Phase 2 — Files + background downloads
+## Phase 2 — Files + background downloads — ✅ DONE (hardware-verified)
 
 - `CameraSession` refactor: move `GpsocketClient` ownership from
   `CameraViewModel` to an Application-scoped holder. ViewModel and the download
@@ -57,7 +57,7 @@ no more reverse engineering is required to ship.
 - **Done when:** a real clip downloads while the screen is off, shows progress
   in the notification shade, lands in the gallery, and plays in-app.
 
-## Phase 3 — Settings
+## Phase 3 — Settings — implemented (menu loads on hardware; setParam round-trip unverified)
 
 - Parse `camera_menu.xml` → categories → `ListItem` rows (enums as dropdowns,
   toggles as switches, read-only Version/Name rows).
@@ -77,8 +77,11 @@ no more reverse engineering is required to ship.
 
 ## Later / unknown (not blocking)
 
-- `0x0403` thumbnails — every probe returned `f8ff`; likely unsupported on
-  this camera. Revisit only if a capture ever shows a non-error reply.
+- `0x0403` thumbnails — every probe returned `f8ff` (dozens of records in the
+  Oct-6 capture; Viidure's list shows no thumbnails either). Unsupported on
+  this firmware. Revisit only if a capture ever shows a non-error reply.
+- `feff` on newest record — the camera refuses downloads of the file it is
+  currently writing; verified: same record refuses, older ones stream fine.
 - `0x0100` status blob fields — decode when a UI feature needs them
   (storage %, recording state are the candidates).
 - File delete/lock commands — never observed; would need a labeled capture.
