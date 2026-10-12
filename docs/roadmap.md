@@ -66,14 +66,20 @@ no more reverse engineering is required to ship.
 - **Done when:** every setting in the menu reads correctly and at least one
   harmless toggle (e.g. WDR) round-trips on hardware.
 
-## Phase 4 — Polish & release
+## Phase 4 — Polish & release — mostly done (release flow verified; last item needs hardware)
 
-- Reconnect handling: hotspot drop → clean Disconnected state, no stuck UI.
-- Loading skeletons, content descriptions, edge-to-edge insets.
-- Debug log behind `BuildConfig.DEBUG` or a hidden menu entry.
-- Release build: minify+shrinkResources, signed APK, versionName in About row.
+- Reconnect handling: hotspot drop → clean Disconnected state via a 15 s
+  read timeout (the camera's ~1/s status blob is the liveness signal).
+- Content descriptions + edge-to-edge insets: done.
+- Debug log in the overflow menu, debug builds only (`BuildConfig.DEBUG`).
+- Release build: minify+shrinkResources + optional signing from a
+  gitignored `keystore.properties`; verified `assembleRelease` produces a
+  signed APK. `versionName` shows in a Settings About row.
+- Lint clean: 0 warnings (deprecation/manifest/icon issues fixed; the
+  Kotlin-2.0 lint crash rule and pinning-nag rules disabled with reasons).
 - **Done when:** cold start → connect → live view → background-download a
   clip with screen off → change a setting, all without a dev PC attached.
+  ← needs a hardware pass; everything else is verified.
 
 ## Later / unknown (not blocking)
 
