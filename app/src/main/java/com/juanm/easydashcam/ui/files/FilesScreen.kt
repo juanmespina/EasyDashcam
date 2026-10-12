@@ -8,7 +8,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,11 +23,13 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Videocam
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -36,12 +37,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -61,6 +64,7 @@ import com.juanm.easydashcam.core.session.CameraSession
 import com.juanm.easydashcam.ui.camera.CameraViewModel
 import com.juanm.easydashcam.ui.components.ConnectionGate
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -81,7 +85,6 @@ private fun FilesList(vm: CameraViewModel) {
     val loading by vm.filesLoading.collectAsStateWithLifecycle()
     val downloads by vm.downloads.collectAsStateWithLifecycle()
     val localFiles by vm.localFiles.collectAsStateWithLifecycle()
-    var selected by remember { mutableStateOf<GpsocketClient.CameraFile?>(null) }
     var playing by remember { mutableStateOf<Uri?>(null) }
 
     var pendingNotif by remember { mutableStateOf<GpsocketClient.CameraFile?>(null) }
@@ -122,30 +125,19 @@ private fun FilesList(vm: CameraViewModel) {
                             dayFiles,
                             key = { i, f -> "${f.uniqueId}_${f.timestamp}_$i" }
                         ) { _, f ->
+                            val uri = localFiles[f.uniqueId]
                             FileRow(
                                 file = f,
                                 download = downloads[f.uniqueId],
-                                local = localFiles.containsKey(f.uniqueId),
+                                local = uri != null,
                                 onDownload = { startDownload(f) },
-                                onClick = { selected = f }
+                                onPlay = uri?.let { { playing = it } }
                             )
                             HorizontalDivider()
                         }
                     }
                 }
             }
-        }
-    }
-
-    selected?.let { f ->
-        val uri = localFiles[f.uniqueId]
-        ModalBottomSheet(onDismissRequest = { selected = null }) {
-            FileDetail(
-                file = f,
-                local = uri != null,
-                onDownload = { selected = null; startDownload(f) },
-                onPlay = uri?.let { { playing = it } }
-            )
         }
     }
 
@@ -170,7 +162,7 @@ private fun FileRow(
     download: CameraSession.DownloadState?,
     local: Boolean,
     onDownload: () -> Unit,
-    onClick: () -> Unit,
+    onPlay: (() -> Unit)?,
 ) {
     val (icon, kindLabel) = when (file.kindChar) {
         'L' -> Icons.Default.Lock to "Locked"
@@ -178,7 +170,6 @@ private fun FileRow(
         else -> Icons.Default.Videocam to "Video"
     }
     ListItem(
-        modifier = Modifier.clickable(onClick = onClick),
         leadingContent = { Icon(icon, contentDescription = kindLabel) },
         headlineContent = {
             Text(file.timestamp?.format(DateTimeFormatter.ofPattern("HH:mm:ss")) ?: "id 0x%04x".format(file.id))
@@ -186,7 +177,7 @@ private fun FileRow(
         supportingContent = {
             Text("$kindLabel · ${"%.1f".format(file.size / 1024f)} MB${if (local) " · downloaded" else ""}")
         },
-        trailingContent = { DownloadTrailing(download, local, onDownload) }
+        trailingContent = { DownloadTrailing(download, local, onDownload, onPlay) }
     )
 }
 
@@ -194,7 +185,8 @@ private fun FileRow(
 private fun DownloadTrailing(
     download: CameraSession.DownloadState?,
     local: Boolean,
-    onDownload: () -> Unit
+    onDownload: () -> Unit,
+    onPlay: (() -> Unit)? = null
 ) {
     when {
         download?.error != null -> Icon(
@@ -203,6 +195,13 @@ private fun DownloadTrailing(
             tint = MaterialTheme.colorScheme.error,
             modifier = Modifier.size(20.dp)
         )
+        onPlay != null -> IconButton(onClick = onPlay) {
+            Icon(
+                Icons.Default.PlayArrow,
+                contentDescription = "Play downloaded file",
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
         download?.done == true || local -> Icon(
             Icons.Default.CheckCircle,
             contentDescription = "Downloaded",
@@ -221,58 +220,35 @@ private fun DownloadTrailing(
     }
 }
 
-@Composable
-private fun FileDetail(
-    file: GpsocketClient.CameraFile,
-    local: Boolean,
-    onDownload: () -> Unit,
-    onPlay: (() -> Unit)?
-) {
-    Column(Modifier.padding(horizontal = 24.dp, vertical = 8.dp).fillMaxWidth()) {
-        Text(
-            file.timestamp?.format(DateTimeFormatter.ofPattern("MMM d, HH:mm:ss", Locale.getDefault()))
-                ?: "Record 0x%04x".format(file.id),
-            style = MaterialTheme.typography.titleMedium
-        )
-        Text(
-            "kind '${file.kindChar}' · ${file.size} KiB · id 0x%04x".format(file.id),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 4.dp)
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 24.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            if (onPlay != null) {
-                Button(onClick = onPlay, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null)
-                    Text(" Play")
-                }
-            }
-            if (!local) {
-                Button(onClick = onDownload, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Default.Download, contentDescription = null)
-                    Text(" Download")
-                }
-            }
-        }
-    }
-}
-
-/** Full-screen MJPEG playback of a downloaded clip. */
+/** Full-screen MJPEG playback of a downloaded clip, with seek controls. */
 @Composable
 private fun PlayerDialog(uri: Uri, onClose: () -> Unit) {
     val context = LocalContext.current
     var frame by remember { mutableStateOf<Bitmap?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    var pos by remember { mutableIntStateOf(0) }
+    var paused by remember { mutableStateOf(false) }
+    var indexed by remember { mutableStateOf(false) }
     val player = remember(uri) {
-        AviMjpegPlayer { context.contentResolver.openInputStream(uri)!! }
+        AviMjpegPlayer(context.contentResolver.openFileDescriptor(uri, "r")!!)
     }
+
+    DisposableEffect(uri) { onDispose { player.close() } }
 
     LaunchedEffect(uri) {
         try {
-            player.play { frame = it }
+            player.index()
+            indexed = true
+            while (true) {
+                if (paused || pos >= player.frames.size) {
+                    if (pos >= player.frames.size) paused = true
+                    delay(80)
+                    continue
+                }
+                frame = player.frameAt(pos)
+                pos++
+                delay(player.frameMs)
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -298,6 +274,47 @@ private fun PlayerDialog(uri: Uri, onClose: () -> Unit) {
             }
             IconButton(onClick = onClose, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)) {
                 Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+            }
+            if (indexed && player.frames.size > 1) {
+                val count = player.frames.size
+                val skip = (1000L / player.frameMs.coerceAtLeast(1)).toInt().coerceAtLeast(1)
+                Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(16.dp)) {
+                    Slider(
+                        value = pos.toFloat(),
+                        onValueChange = {
+                            pos = it.toInt().coerceIn(0, count - 1)
+                        },
+                        valueRange = 0f..(count - 1).toFloat()
+                    )
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(onClick = { pos = (pos - skip).coerceAtLeast(0); paused = false }) {
+                            Icon(Icons.Default.Replay10, contentDescription = "Back 1 s", tint = Color.White)
+                        }
+                        IconButton(onClick = {
+                            paused = !paused
+                            if (!paused && pos >= count) pos = 0
+                        }) {
+                            Icon(
+                                if (paused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                                contentDescription = if (paused) "Play" else "Pause",
+                                tint = Color.White
+                            )
+                        }
+                        IconButton(onClick = { pos = (pos + skip).coerceAtMost(count - 1); paused = false }) {
+                            Icon(Icons.Default.Forward10, contentDescription = "Forward 1 s", tint = Color.White)
+                        }
+                        Text(
+                            "%.1f / %.1f s".format(pos * player.frameMs / 1000.0, player.durationSec),
+                            color = Color.White,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(start = 16.dp)
+                        )
+                    }
+                }
             }
         }
     }
