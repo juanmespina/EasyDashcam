@@ -246,7 +246,9 @@ class RtspMjpegClient(
         try {
             track.play()
             while (true) {
-                sock.receive(pkt)
+                // The socket has an 8 s timeout — the camera may simply stop
+                // sending audio when there's nothing to hear; keep waiting.
+                try { sock.receive(pkt) } catch (_: java.net.SocketTimeoutException) { continue }
                 val d = pkt.data
                 val off = pkt.offset
                 if (pkt.length < 12) continue
@@ -265,8 +267,8 @@ class RtspMjpegClient(
                 }
                 track.write(pcm, 0, len and 1.inv())
             }
-        } catch (_: Exception) {
-            // socket closed or playback failure — either way the stream is over
+        } catch (e: Exception) {
+            Log.i("RTSP", "audio stopped: ${e.message}")   // socket closed — stream over
         } finally {
             runCatching { track.stop() }
             track.release()
