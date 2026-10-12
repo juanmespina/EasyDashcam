@@ -17,9 +17,12 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,7 +65,17 @@ fun AppRoot(vm: CameraViewModel = viewModel()) {
     val currentRoute = backStack?.destination?.route
     var menuOpen by remember { mutableStateOf(false) }
 
+    val snackbar = remember { SnackbarHostState() }
+    val notices by vm.notices.collectAsStateWithLifecycle()
+    LaunchedEffect(notices) {
+        notices.lastOrNull()?.let {
+            snackbar.showSnackbar(it)
+            vm.consumeNotice(it)
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = { Text("Easy Dashcam") },

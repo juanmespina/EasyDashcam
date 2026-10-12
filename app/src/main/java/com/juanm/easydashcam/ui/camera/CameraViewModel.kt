@@ -266,6 +266,9 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     private fun log(line: String) = _frameLog.update { (it + "» $line").takeLast(60) }
     private fun notice(msg: String) = _notices.update { (it + msg).takeLast(3) }
 
+    /** Drop a notice after the snackbar that showed it is dismissed. */
+    fun consumeNotice(msg: String) = _notices.update { it - msg }
+
     companion object {
         private val SETTING_PARAM_IDS = listOf(
             0x0000, 0x0003, 0x0004, 0x0005,
