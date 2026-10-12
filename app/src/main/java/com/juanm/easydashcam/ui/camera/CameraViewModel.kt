@@ -58,6 +58,97 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { client.sendRaw(cmd, args) }
     }
 
+    fun fetchMenu() {
+        viewModelScope.launch {
+            runCatching { client.requestMenuXml() }
+                .onSuccess { log("menu XML: ${it.length} chars") }
+                .onFailure {
+                    val cached = client.lastMenuXml
+                    log("menu re-request failed: ${it.message}" +
+                        (cached?.let { c -> " (init cache: ${c.length} chars)" } ?: ""))
+                }
+        }
+    }
+
+    fun fetchFiles() {
+        viewModelScope.launch {
+            runCatching {
+                val count = client.requestFileCount()
+                log("file count: ${count ?: "?"}")
+                client.listFiles()
+            }.onSuccess { files ->
+                log("${files.size} records:")
+                files.take(8).forEach { log("  $it") }
+                if (files.size > 8) log("  …")
+            }.onFailure { log("file list failed: ${it.message}") }
+        }
+    }
+
+    /** Debug: fetch a fresh file list, pick the smallest recording, download it
+     *  into app storage and report progress in the frame log. */
+    fun downloadFirst() {
+        viewModelScope.launch {
+            runCatching {
+                val files = client.listFiles()
+                val target = files.minByOrNull { it.size }
+                    ?: return@runCatching log("no files on camera")
+                val dest = java.io.File(
+                    getApplication<Application>().filesDir,
+                    "cam_%04x.avi".format(target.id)
+                )
+                log("downloading $target -> ${dest.name}")
+                var lastLogged = -1L
+                val result = dest.outputStream().use { out ->
+                    client.downloadFile(target, out) { got, total ->
+                        val mb = got / (1024 * 1024)
+                        if (mb != lastLogged) { lastLogged = mb; log("  ${got / 1024}/${total / 1024} KiB") }
+                    }
+                }
+                when (result) {
+                    is GpsocketClient.DownloadResult.Success ->
+                        log("done: ${result.bytes} B -> ${dest.absolutePath}")
+                    is GpsocketClient.DownloadResult.Refused ->
+                        log("camera refused (feff) — stale id or selection expired")
+                    is GpsocketClient.DownloadResult.Incomplete ->
+                        log("stalled at ${result.bytes}/${result.expected} B")
+                    is GpsocketClient.DownloadResult.Failed ->
+                        log("failed: ${result.reason}")
+                }
+            }.onFailure { log("download failed: ${it.message}") }
+        }
+    }
+
+    fun fetchSettings() {
+        viewModelScope.launch {
+            runCatching { client.getParams(SETTING_PARAM_IDS) }
+                .onSuccess { values ->
+                    SETTING_PARAM_IDS.forEach { id ->
+                        val v = values[id]
+                        val disp = when {
+                            v == null || v.isEmpty() -> "no reply"
+                            v.size == 1 -> "0x%02x".format(v[0])
+                            else -> v.toString(Charsets.UTF_8).trimEnd('\u0000')
+                        }
+                        log("param 0x%04x = %s".format(id, disp))
+                    }
+                }
+                .onFailure { log("get params failed: ${it.message}") }
+        }
+    }
+
+    private fun log(line: String) = _frameLog.update { (it + "» $line").takeLast(60) }
+
+    companion object {
+        // From camera_menu.xml (docs/recon): record, capture and system settings
+        // ids + the 0x0300 device-name string param.
+        private val SETTING_PARAM_IDS = listOf(
+            0x0000, 0x0003, 0x0004, 0x0005,
+            0x0100, 0x0101, 0x0108,
+            0x0200, 0x0201, 0x0205, 0x0209,
+            0x0300
+        )
+    }
+
     override fun onCleared() {
         client.disconnect()
         binder.unbind()

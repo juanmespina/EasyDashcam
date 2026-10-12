@@ -46,7 +46,10 @@ class MainActivity : ComponentActivity() {
                     frameLog = log,
                     onConnect = vm::connect,
                     onDisconnect = vm::disconnect,
-                    onProbe = vm::probe
+                    onMenu = vm::fetchMenu,
+                    onFiles = vm::fetchFiles,
+                    onSettings = vm::fetchSettings,
+                    onDownload = vm::downloadFirst
                 )
             }
         }
@@ -60,7 +63,10 @@ fun HomeScreen(
     frameLog: List<String>,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
-    onProbe: (Int, ByteArray) -> Unit
+    onMenu: () -> Unit,
+    onFiles: () -> Unit,
+    onSettings: () -> Unit,
+    onDownload: () -> Unit
 ) {
     Scaffold(
         topBar = { TopAppBar(title = { Text("Easy Dashcam") }) }
@@ -92,14 +98,17 @@ fun HomeScreen(
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val probing = state is GpsocketClient.State.Connected
-                OutlinedButton(onClick = { onProbe(0x0300, byteArrayOf()) }, enabled = probing) {
-                    Text("Probe 0x0300")
+                OutlinedButton(onClick = onMenu, enabled = probing) {
+                    Text("Menu XML")
                 }
-                OutlinedButton(onClick = { onProbe(0x0603, byteArrayOf(0x41)) }, enabled = probing) {
-                    Text("Probe 0x0603+41")
+                OutlinedButton(onClick = onFiles, enabled = probing) {
+                    Text("Files")
                 }
-                OutlinedButton(onClick = { onProbe(0x0305, byteArrayOf()) }, enabled = probing) {
-                    Text("Probe 0x0305")
+                OutlinedButton(onClick = onSettings, enabled = probing) {
+                    Text("Settings")
+                }
+                OutlinedButton(onClick = onDownload, enabled = probing) {
+                    Text("Download")
                 }
             }
             Spacer(Modifier.height(16.dp))
