@@ -22,10 +22,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import com.juanm.easydashcam.core.net.RtspMjpegClient
 import com.juanm.easydashcam.ui.camera.CameraViewModel
 import com.juanm.easydashcam.ui.components.ConnectionGate
+import kotlinx.coroutines.CancellationException
 
 /** Live tab — RTSP MJPEG stream from the camera. */
 @Composable
@@ -41,22 +46,38 @@ private fun LivePlayer(onArmed: suspend () -> Unit) {
     var status by remember { mutableStateOf<Status>(Status.Buffering) }
     var frame by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
     val client = remember { RtspMjpegClient() }
+    val lifecycleOwner = LocalLifecycleOwner.current
 
-    // The camera needs the GPSOCKET session in preview mode (0x0000 arg=01)
-    // before it pushes RTP media — verified gap in the Viidure pcaps.
-    LaunchedEffect(Unit) {
-        runCatching { onArmed() }
-        runCatching {
-            client.run { bmp ->
-                frame = bmp
-                if (status != Status.Playing) status = Status.Playing
-            }
-            status = Status.Ended
-        }.onFailure {
-            status = Status.Error(it.message ?: it.javaClass.simpleName)
+    // Stream only while the app is in the foreground. repeatOnLifecycle
+    // restarts the session on return; the ON_STOP observer closes the sockets
+    // because DatagramSocket.receive() is not interruptible by cancellation.
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, e ->
+            if (e == Lifecycle.Event.ON_STOP) client.close()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            client.close()
         }
     }
-    DisposableEffect(Unit) { onDispose { client.close() } }
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            status = Status.Buffering
+            try {
+                runCatching { onArmed() }   // GPSOCKET preview mode (0x01)
+                client.run { bmp ->
+                    frame = bmp
+                    if (status != Status.Playing) status = Status.Playing
+                }
+                if (status == Status.Playing) status = Status.Ended
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                status = Status.Error(e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         frame?.let {
