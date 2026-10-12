@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Pre-API-31 equivalent of data_extraction_rules: back up nothing. -->
+<full-backup-content>
+    <exclude domain="root" path="." />
+</full-backup-content>
