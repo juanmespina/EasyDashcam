@@ -4,32 +4,40 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.juanm.easydashcam.core.net.GpsocketClient
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
 import com.juanm.easydashcam.ui.camera.CameraViewModel
+import com.juanm.easydashcam.ui.debug.DebugScreen
+import com.juanm.easydashcam.ui.files.FilesScreen
+import com.juanm.easydashcam.ui.live.LiveScreen
+import com.juanm.easydashcam.ui.navigation.Destinations
+import com.juanm.easydashcam.ui.settings.SettingsScreen
 import com.juanm.easydashcam.ui.theme.EasyDashcamTheme
 
 class MainActivity : ComponentActivity() {
@@ -38,19 +46,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             EasyDashcamTheme {
-                val vm: CameraViewModel = viewModel()
-                val state by vm.state.collectAsState()
-                val log by vm.frameLog.collectAsState()
-                HomeScreen(
-                    state = state,
-                    frameLog = log,
-                    onConnect = vm::connect,
-                    onDisconnect = vm::disconnect,
-                    onMenu = vm::fetchMenu,
-                    onFiles = vm::fetchFiles,
-                    onSettings = vm::fetchSettings,
-                    onDownload = vm::downloadFirst
-                )
+                AppRoot()
             }
         }
     }
@@ -58,66 +54,85 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(
-    state: GpsocketClient.State,
-    frameLog: List<String>,
-    onConnect: () -> Unit,
-    onDisconnect: () -> Unit,
-    onMenu: () -> Unit,
-    onFiles: () -> Unit,
-    onSettings: () -> Unit,
-    onDownload: () -> Unit
-) {
+fun AppRoot(vm: CameraViewModel = viewModel()) {
+    val nav = rememberNavController()
+    val state by vm.state.collectAsStateWithLifecycle()
+    val frameLog by vm.frameLog.collectAsStateWithLifecycle()
+    val backStack by nav.currentBackStackEntryAsState()
+    val currentRoute = backStack?.destination?.route
+    var menuOpen by remember { mutableStateOf(false) }
+
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Easy Dashcam") }) }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(16.dp)
-        ) {
-            Text(
-                when (state) {
-                    is GpsocketClient.State.Connected -> "Connected to camera"
-                    is GpsocketClient.State.Connecting -> "Connecting…"
-                    is GpsocketClient.State.Disconnected -> "Not connected — join the camera Wi-Fi hotspot first"
-                    is GpsocketClient.State.Error -> "Error: ${state.cause.message ?: state.cause.javaClass.simpleName}"
-                },
-                style = MaterialTheme.typography.titleMedium
+        topBar = {
+            TopAppBar(
+                title = { Text("Easy Dashcam") },
+                actions = {
+                    Box {
+                        IconButton(onClick = { menuOpen = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Menu")
+                        }
+                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                            DropdownMenuItem(
+                                text = { Text(Destinations.Debug.label) },
+                                onClick = {
+                                    menuOpen = false
+                                    nav.navigate(Destinations.Debug.route)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Disconnect") },
+                                onClick = {
+                                    menuOpen = false
+                                    vm.disconnect()
+                                }
+                            )
+                        }
+                    }
+                }
             )
-            Spacer(Modifier.height(16.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = onConnect, enabled = state is GpsocketClient.State.Disconnected || state is GpsocketClient.State.Error) {
-                    Text("Connect")
-                }
-                OutlinedButton(onClick = onDisconnect, enabled = state is GpsocketClient.State.Connecting || state is GpsocketClient.State.Connected) {
-                    Text("Disconnect")
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                val probing = state is GpsocketClient.State.Connected
-                OutlinedButton(onClick = onMenu, enabled = probing) {
-                    Text("Menu XML")
-                }
-                OutlinedButton(onClick = onFiles, enabled = probing) {
-                    Text("Files")
-                }
-                OutlinedButton(onClick = onSettings, enabled = probing) {
-                    Text("Settings")
-                }
-                OutlinedButton(onClick = onDownload, enabled = probing) {
-                    Text("Download")
+        },
+        bottomBar = {
+            NavigationBar {
+                Destinations.bottomTabs.forEach { dest ->
+                    NavigationBarItem(
+                        selected = currentRoute == dest.route,
+                        onClick = {
+                            nav.navigate(dest.route) {
+                                popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        },
+                        icon = { Icon(dest.icon, contentDescription = dest.label) },
+                        label = { Text(dest.label) }
+                    )
                 }
             }
-            Spacer(Modifier.height(16.dp))
-            Text("Camera frames (debug)", style = MaterialTheme.typography.labelLarge)
-            Spacer(Modifier.height(8.dp))
-            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                items(frameLog) { line ->
-                    Text(line, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
-                }
+        }
+    ) { padding ->
+        NavHost(
+            navController = nav,
+            startDestination = Destinations.Live.route,
+            modifier = Modifier.fillMaxSize().padding(padding)
+        ) {
+            composable(Destinations.Live.route) {
+                LiveScreen(vm = vm)
+            }
+            composable(Destinations.Files.route) {
+                FilesScreen(vm = vm)
+            }
+            composable(Destinations.Settings.route) {
+                SettingsScreen(vm = vm)
+            }
+            composable(Destinations.Debug.route) {
+                DebugScreen(
+                    state = state,
+                    frameLog = frameLog,
+                    onMenu = vm::fetchMenu,
+                    onFiles = vm::fetchFiles,
+                    onSettings = vm::fetchSettings,
+                    onDownload = vm::downloadFirst
+                )
             }
         }
     }
