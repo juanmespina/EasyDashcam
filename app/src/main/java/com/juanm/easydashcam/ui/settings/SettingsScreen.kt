@@ -83,6 +83,14 @@ private fun SettingsList(vm: CameraViewModel) {
                         HorizontalDivider()
                     }
                 }
+                item(key = "about") {
+                    ListItem(
+                        headlineContent = { Text("Easy Dashcam") },
+                        supportingContent = {
+                            Text("v${com.juanm.easydashcam.BuildConfig.VERSION_NAME} · local-only, no accounts")
+                        }
+                    )
+                }
             }
         }
     }

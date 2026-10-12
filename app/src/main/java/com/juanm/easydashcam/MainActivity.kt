@@ -72,13 +72,15 @@ fun AppRoot(vm: CameraViewModel = viewModel()) {
                             Icon(Icons.Default.MoreVert, contentDescription = "Menu")
                         }
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                            DropdownMenuItem(
-                                text = { Text(Destinations.Debug.label) },
-                                onClick = {
-                                    menuOpen = false
-                                    nav.navigate(Destinations.Debug.route)
-                                }
-                            )
+                            if (BuildConfig.DEBUG) {
+                                DropdownMenuItem(
+                                    text = { Text(Destinations.Debug.label) },
+                                    onClick = {
+                                        menuOpen = false
+                                        nav.navigate(Destinations.Debug.route)
+                                    }
+                                )
+                            }
                             DropdownMenuItem(
                                 text = { Text("Disconnect") },
                                 onClick = {
