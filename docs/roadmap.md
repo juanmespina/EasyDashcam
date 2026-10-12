@@ -28,13 +28,14 @@ no more reverse engineering is required to ship.
 - **Done when:** app opens on Live tab, Connect works from the shell, debug
   log reachable via menu, existing buttons still function.
 
-## Phase 1 — Live view
+## Phase 1 — Live view — ✅ DONE (hardware-verified)
 
-- `PlayerView` (Media3) playing `rtsp://192.168.100.1:8080/?action=stream`.
-- Player lifecycle tied to the screen (pause when backgrounded, release on
-  leave); start/stop requires Connected state.
-- Show buffering/offline states; a tap toggles controls.
-- **Done when:** live MJPEG video plays full-screen on the camera hotspot.
+- `RtspMjpegClient` (in `core/net/`): hand-rolled RTSP handshake + RFC 2435
+  depacketizer + `BitmapFactory` frames into a Compose `Image`.
+  Media3-rtsp cannot parse RTP payload type 26 (MJPEG) — dead end, removed.
+- Camera must be armed first: GPSOCKET mode `0x01` (`enterPreviewMode`).
+- Stream lifecycle tied to `Lifecycle.State.STARTED` — stops in background.
+- **Done when:** live MJPEG video plays full-screen on the camera hotspot. ✓
 
 ## Phase 2 — Files + background downloads
 
@@ -48,8 +49,11 @@ no more reverse engineering is required to ship.
   progress notification with cancel action. Queue = sequential (the protocol
   serializes transfers anyway — one socket, one request at a time).
 - Runtime `POST_NOTIFICATIONS` prompt on first download (API 33+).
-- In-app playback of downloaded AVI via ExoPlayer; photos shown as image.
-- Empty/error states.
+- In-app playback of downloaded AVI via `AviMjpegPlayer` (RIFF demux + JPEG
+  decode — the same dep-free approach as the live view; stock players and
+  ExoPlayer are unreliable for MJPEG-in-AVI).
+- Local-copy detection via MediaStore scan (`cam_<id><kind>.avi`) so
+  downloaded rows stay marked across restarts.
 - **Done when:** a real clip downloads while the screen is off, shows progress
   in the notification shade, lands in the gallery, and plays in-app.
 
