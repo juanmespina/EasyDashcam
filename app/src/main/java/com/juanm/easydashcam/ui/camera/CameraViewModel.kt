@@ -221,7 +221,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                         val disp = when {
                             v == null || v.isEmpty() -> "no reply"
                             v.size == 1 -> "0x%02x".format(v[0])
-                            else -> v.toString(Charsets.UTF_8).trimEnd(' ')
+                            else -> v.toString(Charsets.UTF_8).trimEnd('\u0000')
                         }
                         log("param 0x%04x = %s".format(id, disp))
                     }
