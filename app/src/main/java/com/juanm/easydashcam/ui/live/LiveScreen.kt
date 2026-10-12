@@ -31,18 +31,20 @@ import com.juanm.easydashcam.core.net.RtspMjpegClient
 import com.juanm.easydashcam.ui.camera.CameraViewModel
 import com.juanm.easydashcam.ui.components.ConnectionGate
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 
 /** Live tab — RTSP MJPEG stream from the camera. */
 @Composable
 fun LiveScreen(vm: CameraViewModel) {
     val state by vm.state.collectAsStateWithLifecycle()
     ConnectionGate(state = state, onConnect = vm::connect) {
-        LivePlayer(onArmed = vm::enterPreviewMode)
+        LivePlayer(onArmed = vm::enterPreviewMode, onDisarmed = vm::exitPreviewMode)
     }
 }
 
 @Composable
-private fun LivePlayer(onArmed: suspend () -> Unit) {
+private fun LivePlayer(onArmed: suspend () -> Unit, onDisarmed: () -> Unit) {
     var status by remember { mutableStateOf<Status>(Status.Buffering) }
     var frame by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
     val client = remember { RtspMjpegClient() }
@@ -53,12 +55,16 @@ private fun LivePlayer(onArmed: suspend () -> Unit) {
     // because DatagramSocket.receive() is not interruptible by cancellation.
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, e ->
-            if (e == Lifecycle.Event.ON_STOP) client.close()
+            if (e == Lifecycle.Event.ON_STOP) {
+                client.stop()       // UDP only — lets run() send TEARDOWN
+                onDisarmed()        // drop GPSOCKET preview mode too
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-            client.close()
+            client.stop()
+            onDisarmed()
         }
     }
     LaunchedEffect(lifecycleOwner) {
@@ -74,7 +80,10 @@ private fun LivePlayer(onArmed: suspend () -> Unit) {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                status = Status.Error(e.message ?: e.javaClass.simpleName)
+                // Socket errors caused by our own stop() must not flash an error.
+                if (currentCoroutineContext().isActive) {
+                    status = Status.Error(e.message ?: e.javaClass.simpleName)
+                }
             }
         }
     }

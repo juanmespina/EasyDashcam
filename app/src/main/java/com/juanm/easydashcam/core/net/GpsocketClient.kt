@@ -281,6 +281,13 @@ class GpsocketClient(
         requestLock.withLock { enterMode(MODE_PREVIEW) }
     }
 
+    /** Leave preview mode. The camera answers RTSP TEARDOWN with 501, so
+     *  dropping to idle is what actually frees its one live session —
+     *  otherwise the next SETUP races a stale session and gets a 404. */
+    suspend fun exitPreviewMode() {
+        requestLock.withLock { enterMode(MODE_IDLE) }
+    }
+
     private suspend fun enterSettingsMode() {
         writeBare(CMD_MODE_400)
         delay(30)

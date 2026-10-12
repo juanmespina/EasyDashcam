@@ -119,6 +119,13 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     /** Arm the camera's RTSP push before the player prepares. */
     suspend fun enterPreviewMode() = client.enterPreviewMode()
 
+    /** Drop preview mode when leaving Live — releases the camera's RTSP
+     *  session (it never honors TEARDOWN). Fire-and-forget: runs on the
+     *  viewModel scope since composable disposal cannot suspend. */
+    fun exitPreviewMode() {
+        viewModelScope.launch { runCatching { client.exitPreviewMode() } }
+    }
+
     // ---- Files --------------------------------------------------------------
 
     fun refreshFiles() {
