@@ -13,6 +13,10 @@ no more reverse engineering is required to ship.
   `GpsocketClient`, downloads via `MediaStore`, string resources for UI text.
 - **Offline-first:** everything must work on the camera hotspot with zero
   internet. The debug frame log stays, hidden behind a dev toggle.
+- **Fast and background-friendly.** Downloads keep running with the screen
+  off / app backgrounded (foreground service + progress notification). One
+  `GpsocketClient` per camera session, owned by the process — not by a screen —
+  so service and UI share the same socket.
 
 ## Phase 0 — App shell (foundation for everything)
 
@@ -32,16 +36,22 @@ no more reverse engineering is required to ship.
 - Show buffering/offline states; a tap toggles controls.
 - **Done when:** live MJPEG video plays full-screen on the camera hotspot.
 
-## Phase 2 — Files
+## Phase 2 — Files + background downloads
 
+- `CameraSession` refactor: move `GpsocketClient` ownership from
+  `CameraViewModel` to an Application-scoped holder. ViewModel and the download
+  service both use it — this is what makes downloads survive the UI.
 - List from `listFiles()`: icon by kind (L/A/J), timestamp, human size,
   grouped by day. Pull-to-refresh.
-- Tap → download with progress (reuse `downloadFile()`), destination
-  `MediaStore` `Movies/EasyDashcam/` — visible in gallery, survives reinstall.
+- Tap → `DownloadService` (foregroundServiceType `dataSync`, manifest already
+  declares it): `downloadFile()` into `MediaStore` `Movies/EasyDashcam/`,
+  progress notification with cancel action. Queue = sequential (the protocol
+  serializes transfers anyway — one socket, one request at a time).
+- Runtime `POST_NOTIFICATIONS` prompt on first download (API 33+).
 - In-app playback of downloaded AVI via ExoPlayer; photos shown as image.
-- Empty/error states; cancel-able download.
-- **Done when:** a real clip downloads, appears in the gallery, and plays
-  in-app without leaving the camera network.
+- Empty/error states.
+- **Done when:** a real clip downloads while the screen is off, shows progress
+  in the notification shade, lands in the gallery, and plays in-app.
 
 ## Phase 3 — Settings
 
@@ -54,13 +64,12 @@ no more reverse engineering is required to ship.
 
 ## Phase 4 — Polish & release
 
-- Foreground-service download for large clips (manifest already prepares it).
 - Reconnect handling: hotspot drop → clean Disconnected state, no stuck UI.
 - Loading skeletons, content descriptions, edge-to-edge insets.
 - Debug log behind `BuildConfig.DEBUG` or a hidden menu entry.
 - Release build: minify+shrinkResources, signed APK, versionName in About row.
-- **Done when:** cold start → connect → live view → download a clip → change
-  a setting, all without a dev PC attached.
+- **Done when:** cold start → connect → live view → background-download a
+  clip with screen off → change a setting, all without a dev PC attached.
 
 ## Later / unknown (not blocking)
 
