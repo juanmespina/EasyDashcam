@@ -2,11 +2,9 @@ package com.juanm.easydashcam.core.media
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.os.ParcelFileDescriptor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.Closeable
-import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.channels.FileChannel
@@ -20,14 +18,12 @@ import java.nio.channels.FileChannel
  * seeking instant. Photo payloads may not even be RIFF — they start with the
  * JPEG SOI marker directly and are exposed as a single-frame clip.
  */
-class AviMjpegPlayer(pfd: ParcelFileDescriptor) : Closeable {
+class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
 
     class AviException(msg: String) : Exception(msg)
 
     /** Byte range of one JPEG frame inside the file. */
     data class FrameRef(val offset: Long, val length: Int)
-
-    private val ch: FileChannel = FileInputStream(pfd.fileDescriptor).channel
 
     /** Seek targets for every video chunk, in order. */
     var frames: List<FrameRef> = emptyList()

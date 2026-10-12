@@ -230,7 +230,8 @@ private fun PlayerDialog(uri: Uri, onClose: () -> Unit) {
     var paused by remember { mutableStateOf(false) }
     var indexed by remember { mutableStateOf(false) }
     val player = remember(uri) {
-        AviMjpegPlayer(context.contentResolver.openFileDescriptor(uri, "r")!!)
+        AviMjpegPlayer(java.io.FileInputStream(
+            context.contentResolver.openFileDescriptor(uri, "r")!!.fileDescriptor).channel)
     }
 
     DisposableEffect(uri) { onDispose { player.close() } }
@@ -239,13 +240,15 @@ private fun PlayerDialog(uri: Uri, onClose: () -> Unit) {
         try {
             player.index()
             indexed = true
+            var lastDecoded = -1
             while (true) {
-                if (paused || pos >= player.frames.size) {
-                    if (pos >= player.frames.size) paused = true
-                    delay(80)
-                    continue
-                }
+                if (pos >= player.frames.size) { paused = true }
+                // Decode when playing, or once after the slider moved while paused.
+                if (paused && pos == lastDecoded) { delay(80); continue }
+                if (pos >= player.frames.size) { delay(80); continue }
                 frame = player.frameAt(pos)
+                lastDecoded = pos
+                if (paused) { delay(80); continue }
                 pos++
                 delay(player.frameMs)
             }
