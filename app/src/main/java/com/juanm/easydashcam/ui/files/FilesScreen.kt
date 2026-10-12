@@ -125,11 +125,15 @@ private fun FilesList(vm: CameraViewModel) {
         onRefresh = { vm.refreshFiles(); vm.refreshLocalFiles() },
         modifier = Modifier.fillMaxSize().weight(1f)
     ) {
+        // Locked (L) records can't be served — the camera feff-refuses their
+        // downloads and Viidure's captures never show one transferred either.
+        val lockedCount = files?.count { it.kindChar == 'L' } ?: 0
         val list = files?.let { all ->
+            val servable = all.filter { it.kindChar != 'L' }
             when (filter) {
-                MediaFilter.ALL -> all
-                MediaFilter.VIDEOS -> all.filter { it.kindChar != 'J' }
-                MediaFilter.PHOTOS -> all.filter { it.kindChar == 'J' }
+                MediaFilter.ALL -> servable
+                MediaFilter.VIDEOS -> servable.filter { it.kindChar != 'J' }
+                MediaFilter.PHOTOS -> servable.filter { it.kindChar == 'J' }
             }
         }
         when {
@@ -157,6 +161,17 @@ private fun FilesList(vm: CameraViewModel) {
                                 onPlay = uri?.let { { playing = it } }
                             )
                             HorizontalDivider()
+                        }
+                    }
+                    if (lockedCount > 0) {
+                        item(key = "locked_footer") {
+                            Text(
+                                "$lockedCount protected clip(s) hidden — " +
+                                    "the camera refuses to serve locked files",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(16.dp)
+                            )
                         }
                     }
                 }
