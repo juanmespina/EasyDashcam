@@ -43,6 +43,7 @@ class DownloadService : Service() {
         private const val EXTRA_KIND = "kind"
         private const val EXTRA_SIZE = "size"
         private const val CHANNEL_ID = "downloads"
+        private const val CHANNEL_RESULT_ID = "downloads_done"
         private const val NOTIF_ID = 1
         private const val NOTIF_RESULT_ID = 2
         private const val IDLE_SHUTDOWN_MS = 10_000L
@@ -76,6 +77,9 @@ class DownloadService : Service() {
         nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "Downloads", NotificationManager.IMPORTANCE_LOW)
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_RESULT_ID, "Download results", NotificationManager.IMPORTANCE_DEFAULT)
         )
     }
 
@@ -173,7 +177,8 @@ class DownloadService : Service() {
                 finishFile(f.uniqueId)
             }
             is GpsocketClient.DownloadResult.Refused ->
-                failFile(uri, fallback, f.uniqueId, "camera refused")
+                // feff most often means the camera is still writing this record
+                failFile(uri, fallback, f.uniqueId, "camera refused (still recording?)")
             is GpsocketClient.DownloadResult.Incomplete ->
                 failFile(uri, fallback, f.uniqueId, "stalled at ${result.bytes}/${result.expected} B")
             is GpsocketClient.DownloadResult.Failed ->
@@ -186,10 +191,14 @@ class DownloadService : Service() {
         session.updateDownload(
             id, CameraSession.DownloadState(prev?.received ?: 0, prev?.total ?: 0, done = true, error = error)
         )
-        // Result goes on a separate id — the foreground notification is
-        // removed with the service and would take the result with it.
-        nm.notify(NOTIF_RESULT_ID, notification(
-            if (error == null) "Download complete" else "Download failed: $error"))
+        // Result goes on a separate id + channel — the foreground notification
+        // is removed with the service and would take the result with it.
+        nm.notify(NOTIF_RESULT_ID, NotificationCompat.Builder(this, CHANNEL_RESULT_ID)
+            .setContentTitle("Easy Dashcam")
+            .setContentText(if (error == null) "Download complete" else "Download failed: $error")
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setAutoCancel(true)
+            .build())
         Log.i("GPSOCKET", "download %04x -> %s".format(id ushr 8, error ?: "done"))
     }
 
