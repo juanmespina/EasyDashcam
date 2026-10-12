@@ -6,8 +6,10 @@ import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,6 +42,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -90,6 +93,7 @@ private fun FilesList(vm: CameraViewModel) {
     val downloads by vm.downloads.collectAsStateWithLifecycle()
     val localFiles by vm.localFiles.collectAsStateWithLifecycle()
     var playing by remember { mutableStateOf<Uri?>(null) }
+    var deleteCandidate by remember { mutableStateOf<Uri?>(null) }
 
     var pendingNotif by remember { mutableStateOf<GpsocketClient.CameraFile?>(null) }
     var pendingBatch by remember { mutableStateOf(false) }
@@ -185,7 +189,8 @@ private fun FilesList(vm: CameraViewModel) {
                                 download = downloads[f.uniqueId],
                                 local = uri != null,
                                 onDownload = { startDownload(f) },
-                                onPlay = uri?.let { { playing = it } }
+                                onPlay = uri?.let { { playing = it } },
+                                onLongPress = uri?.let { { deleteCandidate = it } }
                             )
                             HorizontalDivider()
                         }
@@ -210,6 +215,21 @@ private fun FilesList(vm: CameraViewModel) {
     playing?.let { uri ->
         PlayerDialog(uri = uri, onClose = { playing = null })
     }
+    deleteCandidate?.let { uri ->
+        AlertDialog(
+            onDismissRequest = { deleteCandidate = null },
+            title = { Text("Delete local copy?") },
+            text = { Text("Removes the file from this device. The camera keeps its recording.") },
+            confirmButton = {
+                TextButton(onClick = { vm.deleteLocal(uri); deleteCandidate = null }) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteCandidate = null }) { Text("Cancel") }
+            }
+        )
+    }
 }
 
 private enum class MediaFilter(val label: String) {
@@ -226,6 +246,7 @@ private fun DayHeader(day: LocalDate?) {
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FileRow(
     file: GpsocketClient.CameraFile,
@@ -233,6 +254,7 @@ private fun FileRow(
     local: Boolean,
     onDownload: () -> Unit,
     onPlay: (() -> Unit)?,
+    onLongPress: (() -> Unit)? = null,
 ) {
     val (icon, kindLabel) = when (file.kindChar) {
         'L' -> Icons.Default.Lock to "Locked"
@@ -256,7 +278,10 @@ private fun FileRow(
                     (if (local) " · downloaded" else "")
             )
         },
-        trailingContent = { DownloadTrailing(download, local, onDownload, onPlay) }
+        trailingContent = { DownloadTrailing(download, local, onDownload, onPlay) },
+        modifier = if (onLongPress != null)
+            Modifier.combinedClickable(onClick = {}, onLongClick = onLongPress)
+        else Modifier
     )
 }
 

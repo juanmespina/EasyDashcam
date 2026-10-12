@@ -140,6 +140,17 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Remove a downloaded clip/photo from MediaStore and refresh the marks. */
+    fun deleteLocal(uri: Uri) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val rows = runCatching {
+                getApplication<Application>().contentResolver.delete(uri, null, null)
+            }.getOrDefault(0)
+            notice(if (rows > 0) "Deleted from device" else "Delete failed")
+            refreshLocalFiles()
+        }
+    }
+
     fun download(f: GpsocketClient.CameraFile) {
         ContextCompat.startForegroundService(
             getApplication(), DownloadService.downloadIntent(getApplication(), f))
