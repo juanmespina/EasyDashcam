@@ -63,7 +63,21 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             client.state.collect { _state.value = it }
         }
         viewModelScope.launch {
+            // ~1 Hz heartbeat/status frames flood the log — record them only
+            // when the payload changes, in full. That diff is what the status
+            // blob (recording state, storage %, GPS if any) decodes from.
+            val quietCmds = setOf(0x0100, 0x0303, 0x0304)
+            val lastSeen = HashMap<Int, ByteArray>()
             client.frames.collect { f ->
+                if (f.cmd in quietCmds) {
+                    if (lastSeen[f.cmd].contentEquals(f.payload)) return@collect
+                    lastSeen[f.cmd] = f.payload
+                    val hex = f.payload.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+                    _frameLog.update {
+                        (it + "cmd=0x%04x len=${f.payload.size}  $hex".format(f.cmd)).takeLast(60)
+                    }
+                    return@collect
+                }
                 val head = f.payload.take(32).joinToString("") { "%02x".format(it.toInt() and 0xFF) }
                 val line = "type=${f.type} cmd=0x%04x len=${f.payload.size}  $head".format(f.cmd)
                 _frameLog.update { (it + line).takeLast(60) }
