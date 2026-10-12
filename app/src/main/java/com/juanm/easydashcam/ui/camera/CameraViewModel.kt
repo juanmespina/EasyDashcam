@@ -269,6 +269,9 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     /** Drop a notice after the snackbar that showed it is dismissed. */
     fun consumeNotice(msg: String) = _notices.update { it - msg }
 
+    /** User-visible one-shot message (snackbar). */
+    fun postNotice(msg: String) = notice(msg)
+
     companion object {
         private val SETTING_PARAM_IDS = listOf(
             0x0000, 0x0003, 0x0004, 0x0005,

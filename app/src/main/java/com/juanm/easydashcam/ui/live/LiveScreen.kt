@@ -1,12 +1,25 @@
 package com.juanm.easydashcam.ui.live
 
+import android.content.ContentValues
+import android.content.Context
+import android.graphics.Bitmap
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -15,12 +28,15 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -31,24 +47,44 @@ import com.juanm.easydashcam.core.net.RtspMjpegClient
 import com.juanm.easydashcam.ui.camera.CameraViewModel
 import com.juanm.easydashcam.ui.components.ConnectionGate
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /** Live tab — RTSP MJPEG stream from the camera. */
 @Composable
 fun LiveScreen(vm: CameraViewModel) {
     val state by vm.state.collectAsStateWithLifecycle()
     ConnectionGate(state = state, onConnect = vm::connect) {
-        LivePlayer(onArmed = vm::enterPreviewMode, onDisarmed = vm::exitPreviewMode)
+        LivePlayer(vm::enterPreviewMode, vm::exitPreviewMode, vm::postNotice)
     }
 }
 
 @Composable
-private fun LivePlayer(onArmed: suspend () -> Unit, onDisarmed: () -> Unit) {
+private fun LivePlayer(
+    onArmed: suspend () -> Unit,
+    onDisarmed: () -> Unit,
+    onNotice: (String) -> Unit
+) {
     var status by remember { mutableStateOf<Status>(Status.Buffering) }
-    var frame by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var frame by remember { mutableStateOf<Bitmap?>(null) }
+    var muted by remember { mutableStateOf(false) }
     val client = remember { RtspMjpegClient() }
     val lifecycleOwner = LocalLifecycleOwner.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    // A mounted dashcam-view phone must not sleep while streaming.
+    val view = LocalView.current
+    DisposableEffect(Unit) {
+        view.keepScreenOn = true
+        onDispose { view.keepScreenOn = false }
+    }
 
     // Stream only while the app is in the foreground. repeatOnLifecycle
     // restarts the session on return; the ON_STOP observer closes the sockets
@@ -119,9 +155,60 @@ private fun LivePlayer(onArmed: suspend () -> Unit, onDisarmed: () -> Unit) {
                 color = Color.White,
                 modifier = Modifier.align(Alignment.Center).padding(16.dp)
             )
-            Status.Playing -> Unit
+            Status.Playing -> Row(
+                Modifier.align(Alignment.BottomEnd).padding(8.dp)
+            ) {
+                IconButton(onClick = {
+                    muted = !muted
+                    client.setAudioMuted(muted)
+                }) {
+                    Icon(
+                        if (muted) Icons.AutoMirrored.Filled.VolumeOff
+                        else Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = if (muted) "Unmute" else "Mute",
+                        tint = Color.White
+                    )
+                }
+                IconButton(onClick = {
+                    frame?.let { bmp ->
+                        scope.launch {
+                            val ok = withContext(Dispatchers.IO) { saveSnapshot(context, bmp) }
+                            onNotice(if (ok) "Snapshot saved to Pictures" else "Snapshot failed")
+                        }
+                    }
+                }) {
+                    Icon(
+                        Icons.Default.PhotoCamera,
+                        contentDescription = "Save snapshot",
+                        tint = Color.White
+                    )
+                }
+            }
         }
     }
+}
+
+/** Writes one frame to Pictures/EasyDashcam; false on any failure. */
+private fun saveSnapshot(context: Context, bmp: Bitmap): Boolean {
+    val name = "snap_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".jpg"
+    if (Build.VERSION.SDK_INT < 29) {
+        val f = java.io.File(context.getExternalFilesDir(Environment.DIRECTORY_PICTURES), name)
+        return runCatching {
+            f.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 95, it) }
+        }.isSuccess
+    }
+    val values = ContentValues().apply {
+        put(MediaStore.Images.Media.DISPLAY_NAME, name)
+        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+        put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/EasyDashcam")
+    }
+    val uri = context.contentResolver.insert(
+        MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values)
+        ?: return false
+    return context.contentResolver.openOutputStream(uri)?.use {
+        bmp.compress(Bitmap.CompressFormat.JPEG, 95, it)
+        true
+    } == true
 }
 
 private sealed interface Status {

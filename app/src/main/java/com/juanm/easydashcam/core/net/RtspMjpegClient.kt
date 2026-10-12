@@ -2,6 +2,9 @@ package com.juanm.easydashcam.core.net
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioTrack
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -31,10 +34,16 @@ class RtspMjpegClient(
     private var rtp: DatagramSocket? = null
     private var rtcp: DatagramSocket? = null
     private val extraSockets = ArrayList<DatagramSocket>()   // audio track sockets
+    private var audioRtp: DatagramSocket? = null
     private var sessionId: String? = null
     private var cseq = 0
+    private var audioPt: Pair<Int, Int>? = null   // (payload type, sample rate)
+    private val muted = java.util.concurrent.atomic.AtomicBoolean(false)
 
     class RtspException(msg: String) : Exception(msg)
+
+    /** Silence/resume the L16 audio channel without touching the stream. */
+    fun setAudioMuted(m: Boolean) = muted.set(m)
 
     /**
      * Runs the session until cancelled or the stream fails; [onFrame] gets one
@@ -44,6 +53,7 @@ class RtspMjpegClient(
     suspend fun run(onFrame: (Bitmap) -> Unit) = withContext(Dispatchers.IO) {
         val base = "rtsp://$host:$port$path"
         sessionId = null   // a re-run is a fresh connection; drop the old session
+        audioPt = null
 
         // The firmware only allows one RTSP session and answers TEARDOWN with
         // "501 Not Implemented" — after a leave/re-enter it may still hold the
@@ -97,9 +107,14 @@ class RtspMjpegClient(
                     .map { it.groupValues[1] }.toList()
                 if (tracks.isEmpty()) throw RtspException("SDP has no track")
 
+                // L16 payload type is usually dynamic — read it from the SDP
+                // rtpmap so we can filter the audio socket correctly.
+                audioPt = Regex("""a=rtpmap:(\d+)\s+L16/(\d+)""").find(sdp)
+                    ?.let { it.groupValues[1].toInt() to it.groupValues[2].toInt() }
+                if (audioPt != null) Log.i("RTSP", "audio: L16 pt=${audioPt!!.first} rate=${audioPt!!.second}")
+
                 // Viidure SETUPs every advertised track (video + audio) before
-                // PLAY — replicate it; audio packets land on sockets we keep
-                // open but never read.
+                // PLAY — replicate it; the audio socket feeds an AudioTrack.
                 tracks.forEachIndexed { i, track ->
                     val rs = DatagramSocket(0).also { it.soTimeout = 8000 }
                     val cs = try { DatagramSocket(rs.localPort + 1) } catch (_: Exception) { DatagramSocket(0) }
@@ -110,6 +125,7 @@ class RtspMjpegClient(
                     )
                     sessionId = setup["session"]?.substringBefore(';')
                     if (i == 0) { rtpSock = rs; rtcpSock = cs; rtp = rs; rtcp = cs }
+                    else if (audioPt != null && audioRtp == null) { audioRtp = rs; extraSockets += cs }
                     else { extraSockets += rs; extraSockets += cs }
                 }
                 request(rd!!, wr!!, "PLAY", "$base/", "Range: npt=0.000-\r\n")
@@ -146,6 +162,7 @@ class RtspMjpegClient(
                 runCatching { request(rd!!, wr!!, "OPTIONS", base) }
             }
         }
+        val audioJob = launch { runAudio() }
 
         try {
             var frame = ByteArray(MAX_FRAME)
@@ -194,6 +211,7 @@ class RtspMjpegClient(
             }
         } finally {
             keepalive.cancel()
+            audioJob.cancel()
             // TEARDOWN must go out before ctrl is closed — otherwise the camera
             // keeps a stale session and 404s the next SETUP.
             runCatching { rd?.let { request(it, wr!!, "TEARDOWN", "$base/") } }
@@ -202,11 +220,66 @@ class RtspMjpegClient(
         Unit
     }
 
+    /**
+     * Plays the camera's L16 audio track. Runs until the socket is closed;
+     * no-ops entirely when the SDP advertised no audio.
+     */
+    private fun runAudio() {
+        val sock = audioRtp ?: return
+        val (pt, rate) = audioPt ?: return
+        val buf = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.ENCODING_PCM_16BIT).coerceAtLeast(4 * 1024) * 2
+        val track = AudioTrack.Builder()
+            .setAudioAttributes(AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE).build())
+            .setAudioFormat(AudioFormat.Builder()
+                .setSampleRate(rate)
+                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+            .setBufferSizeInBytes(buf)
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .build()
+        Log.i("RTSP", "audio playing on :${sock.localPort} (${rate} Hz)")
+        val pkt = DatagramPacket(ByteArray(4096), 4096)
+        val pcm = ByteArray(4096)
+        try {
+            track.play()
+            while (true) {
+                sock.receive(pkt)
+                val d = pkt.data
+                val off = pkt.offset
+                if (pkt.length < 12) continue
+                val csrc = d[off].toInt() and 0x0F
+                if ((d[off + 1].toInt() and 0x7F) != pt) continue
+                val start = off + 12 + csrc * 4
+                val len = pkt.length - (start - off)
+                if (len <= 0) continue
+                if (muted.get()) continue   // drain packets, drop audio
+                // L16 on the wire is big-endian; Android PCM_16BIT is little.
+                var i = 0
+                while (i + 1 < len) {
+                    pcm[i] = d[start + i + 1]
+                    pcm[i + 1] = d[start + i]
+                    i += 2
+                }
+                track.write(pcm, 0, len and 1.inv())
+            }
+        } catch (_: Exception) {
+            // socket closed or playback failure — either way the stream is over
+        } finally {
+            runCatching { track.stop() }
+            track.release()
+        }
+    }
+
     /** Close only the media sockets — unblocks receive() so run() can send a
      *  clean TEARDOWN and finish. Called on ON_STOP/dispose. */
     fun stop() {
         runCatching { rtp?.close() }
         runCatching { rtcp?.close() }
+        runCatching { audioRtp?.close() }
+        audioRtp = null
         extraSockets.forEach { runCatching { it.close() } }
         extraSockets.clear()
         rtp = null; rtcp = null
