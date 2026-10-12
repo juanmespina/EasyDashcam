@@ -108,10 +108,14 @@ class RtspMjpegClient(
                 if (tracks.isEmpty()) throw RtspException("SDP has no track")
 
                 // L16 payload type is usually dynamic — read it from the SDP
-                // rtpmap so we can filter the audio socket correctly.
+                // rtpmap so we can filter the audio socket correctly. Cheap
+                // firmware may instead use a static PT (10/11) with no rtpmap:
+                // fall back to whatever the m=audio line lists.
                 audioPt = Regex("""a=rtpmap:(\d+)\s+L16/(\d+)""").find(sdp)
                     ?.let { it.groupValues[1].toInt() to it.groupValues[2].toInt() }
-                if (audioPt != null) Log.i("RTSP", "audio: L16 pt=${audioPt!!.first} rate=${audioPt!!.second}")
+                    ?: Regex("""m=audio\s+\d+\s+RTP/AVP\s+(\d+)""").find(sdp)
+                        ?.let { it.groupValues[1].toInt() to 16000 }
+                Log.i("RTSP", "audio: ${audioPt?.let { "pt=${it.first} rate=${it.second}" } ?: "none in SDP"}")
 
                 // Viidure SETUPs every advertised track (video + audio) before
                 // PLAY — replicate it; the audio socket feeds an AudioTrack.
@@ -229,6 +233,7 @@ class RtspMjpegClient(
         val (pt, rate) = audioPt ?: return
         val buf = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_16BIT).coerceAtLeast(4 * 1024) * 2
+        if (buf <= 0) { Log.i("RTSP", "audio: getMinBufferSize=$buf"); return }
         val track = AudioTrack.Builder()
             .setAudioAttributes(AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -240,9 +245,13 @@ class RtspMjpegClient(
             .setBufferSizeInBytes(buf)
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
+        if (track.state != AudioTrack.STATE_INITIALIZED) {
+            Log.i("RTSP", "audio: AudioTrack init failed"); track.release(); return
+        }
         Log.i("RTSP", "audio playing on :${sock.localPort} (${rate} Hz)")
         val pkt = DatagramPacket(ByteArray(4096), 4096)
         val pcm = ByteArray(4096)
+        var seen = 0
         try {
             track.play()
             while (true) {
@@ -253,7 +262,9 @@ class RtspMjpegClient(
                 val off = pkt.offset
                 if (pkt.length < 12) continue
                 val csrc = d[off].toInt() and 0x0F
-                if ((d[off + 1].toInt() and 0x7F) != pt) continue
+                val packetPt = d[off + 1].toInt() and 0x7F
+                if (seen < 8) { seen++; Log.i("RTSP", "audio pkt pt=$packetPt len=${pkt.length}") }
+                if (packetPt != pt) continue
                 val start = off + 12 + csrc * 4
                 val len = pkt.length - (start - off)
                 if (len <= 0) continue
