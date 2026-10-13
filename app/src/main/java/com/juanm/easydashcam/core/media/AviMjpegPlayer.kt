@@ -179,16 +179,14 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
     /** Decode frame [i]; null when the JPEG is corrupt. Safe to call from IO. */
     suspend fun frameAt(i: Int): Bitmap? = withContext(Dispatchers.IO) {
         val ref = frames.getOrNull(i) ?: return@withContext null
-        ch.position(ref.offset)
-        val jpeg = readBytes(ref.length) ?: return@withContext null
+        val jpeg = readBytesAt(ref.offset, ref.length) ?: return@withContext null
         BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)
     }
 
     /** First frame downsampled to ~[maxDim] px — for grid thumbnails. */
     suspend fun thumbnail(maxDim: Int): Bitmap? = withContext(Dispatchers.IO) {
         val ref = thumbFrame ?: frames.firstOrNull() ?: return@withContext null
-        ch.position(ref.offset)
-        val jpeg = readBytes(ref.length) ?: return@withContext null
+        val jpeg = readBytesAt(ref.offset, ref.length) ?: return@withContext null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, bounds)
         var sample = 1
@@ -221,8 +219,7 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
             val skip = (pos - audioStarts[lo]).toInt()
             if (skip >= ref.length) return@withContext -1
             val n = minOf(len, ref.length - skip)
-            ch.position(ref.offset + skip)
-            val data = readBytes(n) ?: return@withContext -1
+            val data = readBytesAt(ref.offset + skip, n) ?: return@withContext -1
             System.arraycopy(data, 0, out, off, n)
             n
         }
@@ -238,6 +235,19 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
     private fun readBytes(n: Int): ByteArray? {
         val buf = ByteBuffer.allocate(n)
         while (buf.hasRemaining()) if (ch.read(buf) < 0) return null
+        return buf.array()
+    }
+
+    /** Positional read — doesn't touch the channel's file position, so the
+     *  video decode loop and the audio feeder can share [ch] without a lock. */
+    private fun readBytesAt(offset: Long, n: Int): ByteArray? {
+        val buf = ByteBuffer.allocate(n)
+        var pos = offset
+        while (buf.hasRemaining()) {
+            val r = ch.read(buf, pos)
+            if (r < 0) return null
+            pos += r
+        }
         return buf.array()
     }
 
