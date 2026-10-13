@@ -14,7 +14,7 @@ import android.os.Environment
 import android.os.IBinder
 import android.os.PowerManager
 import android.provider.MediaStore
-import android.util.Log
+import com.juanm.easydashcam.core.DebugLogger
 import androidx.core.app.NotificationCompat
 import com.juanm.easydashcam.EasyDashcamApp
 import com.juanm.easydashcam.core.net.GpsocketClient
@@ -238,7 +238,7 @@ class DownloadService : Service() {
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setAutoCancel(true)
             .build())
-        Log.i("GPSOCKET", "download %04x -> %s".format(id ushr 8, error ?: "done"))
+        DebugLogger.log("GPSOCKET", "download %04x -> %s".format(id ushr 8, error ?: "done"))
     }
 
     private fun failFile(uri: Uri?, fallback: File?, id: Int, error: String) {

@@ -5,4 +5,9 @@ import com.juanm.easydashcam.core.session.CameraSession
 
 class EasyDashcamApp : Application() {
     val session by lazy { CameraSession(this) }
+
+    override fun onCreate() {
+        super.onCreate()
+        com.juanm.easydashcam.core.DebugLogger.init(filesDir)
+    }
 }
