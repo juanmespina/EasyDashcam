@@ -236,6 +236,7 @@ class DownloadService : Service() {
             .setContentTitle("Easy Dashcam")
             .setContentText(if (error == null) "Download complete" else "Download failed: $error")
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentIntent(openAppIntent())
             .setAutoCancel(true)
             .build())
         DebugLogger.log("GPSOCKET", "download %04x -> %s".format(id ushr 8, error ?: "done"))
@@ -247,11 +248,17 @@ class DownloadService : Service() {
         finishFile(id, error)
     }
 
+    private fun openAppIntent(): PendingIntent = PendingIntent.getActivity(
+        this, 0, packageManager.getLaunchIntentForPackage(packageName)!!
+            .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+
     private fun notification(text: String, fileId: Int? = null): Notification {
         val b = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Easy Dashcam")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setContentIntent(openAppIntent())
             .setOngoing(true)
         if (fileId != null) {
             b.addAction(0, "Cancel", PendingIntent.getService(

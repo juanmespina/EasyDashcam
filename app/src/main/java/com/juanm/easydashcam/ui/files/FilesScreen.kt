@@ -2,8 +2,13 @@ package com.juanm.easydashcam.ui.files
 
 import android.Manifest
 import android.graphics.Bitmap
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioTrack
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
+import android.os.StatFs
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -16,6 +21,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -90,6 +96,8 @@ import com.juanm.easydashcam.ui.camera.CameraViewModel
 import com.juanm.easydashcam.ui.components.ConnectionGate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -204,7 +212,10 @@ private fun FilesList(vm: CameraViewModel) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (pending.isNotEmpty()) {
-                TextButton(onClick = startBatch) { Text("Download all (${pending.size})") }
+                TextButton(onClick = startBatch) {
+                    Text("Download all (${pending.size} · %.0f MB)"
+                        .format(pending.sumOf { it.size } / 1024f))
+                }
             }
             if (dayFilter != null) {
                 FilterChip(
@@ -305,7 +316,7 @@ private fun FilesList(vm: CameraViewModel) {
                                     file = f,
                                     download = downloads[f.uniqueId],
                                     durationSec = durations[f.uniqueId],
-                                    local = uri != null,
+                                    localUri = uri,
                                     onDownload = { startDownload(f) },
                                     onPlay = uri?.let { { playing = it to (f.kindChar == 'J') } },
                                     onLongPress = uri?.let { { actionsFor = it to f } }
@@ -316,6 +327,9 @@ private fun FilesList(vm: CameraViewModel) {
                             item(key = "locked_footer", span = { GridItemSpan(maxLineSpan) }) {
                                 LockedFooter(lockedCount)
                             }
+                        }
+                        item(key = "storage_footer", span = { GridItemSpan(maxLineSpan) }) {
+                            StorageFooter()
                         }
                     }
                 } else {
@@ -329,7 +343,7 @@ private fun FilesList(vm: CameraViewModel) {
                                     if (viewMode == ViewMode.TIMELINE) {
                                         TimelineRow(f, i == 0, i == sorted.lastIndex,
                                             downloads[f.uniqueId], durations[f.uniqueId],
-                                            uri != null, { startDownload(f) },
+                                            uri, { startDownload(f) },
                                             uri?.let { { playing = it to (f.kindChar == 'J') } },
                                             uri?.let { { actionsFor = it to f } })
                                     } else {
@@ -337,7 +351,7 @@ private fun FilesList(vm: CameraViewModel) {
                                             file = f,
                                             download = downloads[f.uniqueId],
                                             durationSec = durations[f.uniqueId],
-                                            local = uri != null,
+                                            localUri = uri,
                                             onDownload = { startDownload(f) },
                                             onPlay = uri?.let { { playing = it to (f.kindChar == 'J') } },
                                             onLongPress = uri?.let { { actionsFor = it to f } }
@@ -361,6 +375,7 @@ private fun FilesList(vm: CameraViewModel) {
                         if (lockedCount > 0) {
                             item(key = "locked_footer") { LockedFooter(lockedCount) }
                         }
+                        item(key = "storage_footer") { StorageFooter() }
                     }
                 }
             }
@@ -416,6 +431,29 @@ private fun FilesList(vm: CameraViewModel) {
             }
         )
     }
+}
+
+/** First-frame thumbnail + true duration for a downloaded clip. */
+private data class ClipMeta(val thumb: Bitmap?, val durationSec: Int?)
+
+private object ClipMetaCache {
+    private val cache = android.util.LruCache<String, ClipMeta>(64)
+    fun get(uri: Uri): ClipMeta? = cache.get(uri.toString())
+    suspend fun load(context: android.content.Context, uri: Uri): ClipMeta =
+        get(uri) ?: kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                context.contentResolver.openFileDescriptor(uri, "r")!!.use { pfd ->
+                    AviMjpegPlayer(java.io.FileInputStream(pfd.fileDescriptor).channel).use { p ->
+                        p.index()
+                        ClipMeta(
+                            thumb = p.thumbnail(360),
+                            durationSec = if (p.frames.size > 1 && p.frameMs > 0)
+                                (p.durationSec + 0.5).toInt() else null
+                        )
+                    }
+                }
+            }.getOrDefault(ClipMeta(null, null))
+        }.also { cache.put(uri.toString(), it) }
 }
 
 private fun shareFile(context: android.content.Context, uri: Uri, isImage: Boolean) {
@@ -491,12 +529,13 @@ private fun TimelineRow(
     last: Boolean,
     download: CameraSession.DownloadState?,
     durationSec: Int?,
-    local: Boolean,
+    localUri: Uri?,
     onDownload: () -> Unit,
     onPlay: (() -> Unit)?,
     onLongPress: (() -> Unit)?
 ) {
     val rail = MaterialTheme.colorScheme.outlineVariant
+    val meta = rememberClipMeta(localUri)
     ListItem(
         leadingContent = {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -512,8 +551,10 @@ private fun TimelineRow(
             Text(file.timestamp?.format(DateTimeFormatter.ofPattern("HH:mm:ss"))
                 ?: "id 0x%04x".format(file.id))
         },
-        supportingContent = { Text(fileDetail(file, durationSec, download, local)) },
-        trailingContent = { DownloadTrailing(download, local, onDownload, onPlay) },
+        supportingContent = {
+            Text(fileDetail(file, meta?.durationSec ?: durationSec, download, localUri != null))
+        },
+        trailingContent = { DownloadTrailing(download, localUri != null, onDownload, onPlay) },
         modifier = if (onLongPress != null)
             Modifier.combinedClickable(onClick = {}, onLongClick = onLongPress)
         else Modifier
@@ -538,6 +579,17 @@ private fun GapRow(gapSec: Long) {
     }
 }
 
+/** Loads (and caches) a downloaded clip's thumbnail + real duration. */
+@Composable
+private fun rememberClipMeta(uri: Uri?): ClipMeta? {
+    val context = LocalContext.current
+    var meta by remember(uri) { mutableStateOf(uri?.let(ClipMetaCache::get)) }
+    LaunchedEffect(uri) {
+        meta = if (uri == null) null else ClipMetaCache.load(context, uri)
+    }
+    return meta
+}
+
 @Composable
 private fun LockedFooter(count: Int) {
     Text(
@@ -548,25 +600,52 @@ private fun LockedFooter(count: Int) {
     )
 }
 
+@Composable
+private fun StorageFooter() {
+    val context = LocalContext.current
+    val free = remember {
+        runCatching {
+            StatFs(context.getExternalFilesDir(null)?.absolutePath
+                ?: Environment.getExternalStorageDirectory().path).availableBytes
+        }.getOrNull()
+    }
+    if (free != null) {
+        Text(
+            "%.1f GB free on device".format(free / 1_073_741_824.0),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+        )
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FileRow(
     file: GpsocketClient.CameraFile,
     download: CameraSession.DownloadState?,
     durationSec: Int?,
-    local: Boolean,
+    localUri: Uri?,
     onDownload: () -> Unit,
     onPlay: (() -> Unit)?,
     onLongPress: (() -> Unit)? = null,
 ) {
     val (icon, kindLabel) = kindOf(file)
+    val meta = rememberClipMeta(localUri)
     ListItem(
-        leadingContent = { Icon(icon, contentDescription = kindLabel) },
+        leadingContent = {
+            meta?.thumb?.let {
+                Image(bitmap = it.asImageBitmap(), contentDescription = kindLabel,
+                    contentScale = ContentScale.Crop, modifier = Modifier.size(48.dp))
+            } ?: Icon(icon, contentDescription = kindLabel)
+        },
         headlineContent = {
             Text(file.timestamp?.format(DateTimeFormatter.ofPattern("HH:mm:ss")) ?: "id 0x%04x".format(file.id))
         },
-        supportingContent = { Text(fileDetail(file, durationSec, download, local)) },
-        trailingContent = { DownloadTrailing(download, local, onDownload, onPlay) },
+        supportingContent = {
+            Text(fileDetail(file, meta?.durationSec ?: durationSec, download, localUri != null))
+        },
+        trailingContent = { DownloadTrailing(download, localUri != null, onDownload, onPlay) },
         modifier = if (onLongPress != null)
             Modifier.combinedClickable(onClick = {}, onLongClick = onLongPress)
         else Modifier
@@ -579,12 +658,13 @@ private fun FileTile(
     file: GpsocketClient.CameraFile,
     download: CameraSession.DownloadState?,
     durationSec: Int?,
-    local: Boolean,
+    localUri: Uri?,
     onDownload: () -> Unit,
     onPlay: (() -> Unit)?,
     onLongPress: (() -> Unit)?,
 ) {
     val (icon, kindLabel) = kindOf(file)
+    val meta = rememberClipMeta(localUri)
     Card(
         Modifier.padding(4.dp).then(
             if (onPlay != null || onLongPress != null)
@@ -594,23 +674,30 @@ private fun FileTile(
             else Modifier
         )
     ) {
-        Column(Modifier.padding(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, contentDescription = kindLabel, modifier = Modifier.size(18.dp))
-                Text(
-                    file.timestamp?.format(DateTimeFormatter.ofPattern("HH:mm:ss"))
-                        ?: "id 0x%04x".format(file.id),
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.padding(start = 6.dp)
-                )
+        Column {
+            meta?.thumb?.let {
+                Image(bitmap = it.asImageBitmap(), contentDescription = kindLabel,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxWidth().height(110.dp))
             }
-            Text(
-                fileDetail(file, durationSec, download, local),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Box(Modifier.align(Alignment.End)) {
-                DownloadTrailing(download, local, onDownload, onPlay)
+            Column(Modifier.padding(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(icon, contentDescription = kindLabel, modifier = Modifier.size(18.dp))
+                    Text(
+                        file.timestamp?.format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+                            ?: "id 0x%04x".format(file.id),
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.padding(start = 6.dp)
+                    )
+                }
+                Text(
+                    fileDetail(file, meta?.durationSec ?: durationSec, download, localUri != null),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Box(Modifier.align(Alignment.End)) {
+                    DownloadTrailing(download, localUri != null, onDownload, onPlay)
+                }
             }
         }
     }
@@ -677,17 +764,63 @@ private fun PlayerDialog(uri: Uri, isImage: Boolean, onClose: () -> Unit) {
         try {
             player.index()
             indexed = true
+            // Audio: PCM chunks feed a self-clocking AudioTrack; seeks move the
+            // PCM read position to match the video frame time.
+            val audioJob = if (!player.hasAudio) null else launch {
+                val buf = ByteArray(8192)
+                val track = AudioTrack.Builder()
+                    .setAudioAttributes(AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE).build())
+                    .setAudioFormat(AudioFormat.Builder()
+                        .setSampleRate(player.audioRate)
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setChannelMask(if (player.audioChannels == 1)
+                            AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO)
+                        .build())
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .build()
+                if (track.state != AudioTrack.STATE_INITIALIZED) { track.release(); return@launch }
+                var bytePos = 0L
+                var lastVideoPos = -1
+                var streaming = false
+                try {
+                    while (isActive) {
+                        if (paused || pos >= player.frames.size) {
+                            if (streaming) { track.pause(); streaming = false }
+                            delay(60); continue
+                        }
+                        if (!streaming) { track.play(); streaming = true }
+                        if (pos != lastVideoPos + 1) {   // seek or restart
+                            bytePos = player.audioPosForMs(pos * player.frameMs)
+                            track.pause(); track.flush(); track.play()
+                        }
+                        lastVideoPos = pos
+                        val n = player.audioRead(bytePos, buf)
+                        if (n <= 0) { delay(60); continue }
+                        bytePos += n
+                        track.write(buf, 0, n)   // blocks — paces the playback
+                    }
+                } finally {
+                    runCatching { track.stop() }
+                    track.release()
+                }
+            }
             var lastDecoded = -1
-            while (true) {
-                if (pos >= player.frames.size) { paused = true }
-                // Decode when playing, or once after the slider moved while paused.
-                if (paused && pos == lastDecoded) { delay(80); continue }
-                if (pos >= player.frames.size) { delay(80); continue }
-                frame = player.frameAt(pos)
-                lastDecoded = pos
-                if (paused) { delay(80); continue }
-                pos++
-                delay(player.frameMs)
+            try {
+                while (true) {
+                    if (pos >= player.frames.size) { paused = true }
+                    // Decode when playing, or once after the slider moved while paused.
+                    if (paused && pos == lastDecoded) { delay(80); continue }
+                    if (pos >= player.frames.size) { delay(80); continue }
+                    frame = player.frameAt(pos)
+                    lastDecoded = pos
+                    if (paused) { delay(80); continue }
+                    pos++
+                    delay(player.frameMs)
+                }
+            } finally {
+                audioJob?.cancel()
             }
         } catch (e: CancellationException) {
             throw e
