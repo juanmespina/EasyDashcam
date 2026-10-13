@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.SyncDisabled
@@ -80,6 +81,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -123,6 +125,7 @@ private fun FilesList(vm: CameraViewModel) {
     val localFiles by vm.localFiles.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var playing by remember { mutableStateOf<Pair<Uri, Boolean>?>(null) }
+    var streaming by remember { mutableStateOf<GpsocketClient.CameraFile?>(null) }
     var actionsFor by remember { mutableStateOf<Pair<Uri, GpsocketClient.CameraFile>?>(null) }
     var viewMode by remember { mutableStateOf(ViewMode.LIST) }
     var sortMode by remember { mutableStateOf(SortMode.NEWEST) }
@@ -345,6 +348,7 @@ private fun FilesList(vm: CameraViewModel) {
                                     localUri = uri,
                                     onDownload = { startDownload(f) },
                                     onPlay = uri?.let { { playing = it to (f.kindChar == 'J') } },
+                                    onStream = if (uri == null) { { streaming = f } } else null,
                                     onLongPress = uri?.let { { actionsFor = it to f } }
                                 )
                             }
@@ -371,6 +375,7 @@ private fun FilesList(vm: CameraViewModel) {
                                             downloads[f.uniqueId], durations[f.uniqueId],
                                             uri, { startDownload(f) },
                                             uri?.let { { playing = it to (f.kindChar == 'J') } },
+                                            if (uri == null) { { streaming = f } } else null,
                                             uri?.let { { actionsFor = it to f } })
                                     } else {
                                         FileRow(
@@ -380,6 +385,7 @@ private fun FilesList(vm: CameraViewModel) {
                                             localUri = uri,
                                             onDownload = { startDownload(f) },
                                             onPlay = uri?.let { { playing = it to (f.kindChar == 'J') } },
+                                            onStream = if (uri == null) { { streaming = f } } else null,
                                             onLongPress = uri?.let { { actionsFor = it to f } }
                                         )
                                     }
@@ -428,7 +434,12 @@ private fun FilesList(vm: CameraViewModel) {
         ) { DatePicker(state = dp) }
     }
     playing?.let { (uri, isImage) ->
-        PlayerDialog(uri = uri, isImage = isImage, onClose = { playing = null })
+        PlayerDialog(uri = uri, remote = null, isImage = isImage, vm = vm,
+            onClose = { playing = null })
+    }
+    streaming?.let { f ->
+        PlayerDialog(uri = null, remote = f, isImage = f.kindChar == 'J', vm = vm,
+            onClose = { streaming = null })
     }
     actionsFor?.let { (uri, f) ->
         AlertDialog(
@@ -571,6 +582,7 @@ private fun TimelineRow(
     localUri: Uri?,
     onDownload: () -> Unit,
     onPlay: (() -> Unit)?,
+    onStream: (() -> Unit)?,
     onLongPress: (() -> Unit)?
 ) {
     val rail = MaterialTheme.colorScheme.outlineVariant
@@ -593,7 +605,9 @@ private fun TimelineRow(
         supportingContent = {
             Text(fileDetail(file, meta?.durationSec ?: durationSec, download, localUri != null))
         },
-        trailingContent = { DownloadTrailing(download, localUri != null, onDownload, onPlay) },
+        trailingContent = {
+            DownloadTrailing(download, localUri != null, onDownload, onPlay, onStream)
+        },
         modifier = if (onLongPress != null)
             Modifier.combinedClickable(onClick = {}, onLongClick = onLongPress)
         else Modifier
@@ -667,6 +681,7 @@ private fun FileRow(
     localUri: Uri?,
     onDownload: () -> Unit,
     onPlay: (() -> Unit)?,
+    onStream: (() -> Unit)?,
     onLongPress: (() -> Unit)? = null,
 ) {
     val (icon, kindLabel) = kindOf(file)
@@ -684,7 +699,9 @@ private fun FileRow(
         supportingContent = {
             Text(fileDetail(file, meta?.durationSec ?: durationSec, download, localUri != null))
         },
-        trailingContent = { DownloadTrailing(download, localUri != null, onDownload, onPlay) },
+        trailingContent = {
+            DownloadTrailing(download, localUri != null, onDownload, onPlay, onStream)
+        },
         modifier = if (onLongPress != null)
             Modifier.combinedClickable(onClick = {}, onLongClick = onLongPress)
         else Modifier
@@ -700,6 +717,7 @@ private fun FileTile(
     localUri: Uri?,
     onDownload: () -> Unit,
     onPlay: (() -> Unit)?,
+    onStream: (() -> Unit)?,
     onLongPress: (() -> Unit)?,
 ) {
     val (icon, kindLabel) = kindOf(file)
@@ -735,7 +753,7 @@ private fun FileTile(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Box(Modifier.align(Alignment.End)) {
-                    DownloadTrailing(download, localUri != null, onDownload, onPlay)
+                    DownloadTrailing(download, localUri != null, onDownload, onPlay, onStream)
                 }
             }
         }
@@ -747,66 +765,155 @@ private fun DownloadTrailing(
     download: CameraSession.DownloadState?,
     local: Boolean,
     onDownload: () -> Unit,
-    onPlay: (() -> Unit)? = null
+    onPlay: (() -> Unit)? = null,
+    onStream: (() -> Unit)? = null
 ) {
-    when {
-        download?.error != null -> IconButton(onClick = onDownload) {
-            Icon(
-                Icons.Default.ErrorOutline,
-                contentDescription = "Failed: ${download.error} — tap to retry",
-                tint = MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(20.dp)
-            )
-        }
-        onPlay != null -> IconButton(onClick = onPlay) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        // Streams straight from the camera — plays while the bytes arrive,
+        // nothing kept on the phone unless the user saves it.
+        if (onStream != null) IconButton(onClick = onStream) {
             Icon(
                 Icons.Default.PlayArrow,
-                contentDescription = "Play downloaded file",
+                contentDescription = "Stream without downloading",
+                tint = MaterialTheme.colorScheme.secondary
+            )
+        }
+        when {
+            download?.error != null -> IconButton(onClick = onDownload) {
+                Icon(
+                    Icons.Default.ErrorOutline,
+                    contentDescription = "Failed: ${download.error} — tap to retry",
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            onPlay != null -> IconButton(onClick = onPlay) {
+                Icon(
+                    Icons.Default.PlayArrow,
+                    contentDescription = "Play downloaded file",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+            download?.done == true || local -> Icon(
+                Icons.Default.CheckCircle,
+                contentDescription = "Downloaded",
                 tint = MaterialTheme.colorScheme.primary
             )
-        }
-        download?.done == true || local -> Icon(
-            Icons.Default.CheckCircle,
-            contentDescription = "Downloaded",
-            tint = MaterialTheme.colorScheme.primary
-        )
-        download != null && download.total > 0 -> Box(contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(
-                progress = { (download.received.toFloat() / download.total).coerceIn(0f, 1f) },
-                modifier = Modifier.size(28.dp)
-            )
-        }
-        download != null -> CircularProgressIndicator(modifier = Modifier.size(28.dp))
-        else -> IconButton(onClick = onDownload) {
-            Icon(Icons.Default.Download, contentDescription = "Download")
+            download != null && download.total > 0 -> Box(contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(
+                    progress = { (download.received.toFloat() / download.total).coerceIn(0f, 1f) },
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+            download != null -> CircularProgressIndicator(modifier = Modifier.size(28.dp))
+            else -> IconButton(onClick = onDownload) {
+                Icon(Icons.Default.Download, contentDescription = "Download")
+            }
         }
     }
 }
 
-/** Full-screen MJPEG playback of a downloaded clip, with seek controls. */
+/**
+ * Full-screen MJPEG playback of a downloaded clip ([uri] != null) or a
+ * streamed one ([remote] != null): the bytes are pulled into a temp file
+ * while the player indexes and plays whatever has already arrived — same
+ * wire path as a download, but nothing is kept unless the user saves it.
+ */
 @Composable
-private fun PlayerDialog(uri: Uri, isImage: Boolean, onClose: () -> Unit) {
+private fun PlayerDialog(
+    uri: Uri?,
+    remote: GpsocketClient.CameraFile?,
+    isImage: Boolean,
+    vm: CameraViewModel,
+    onClose: () -> Unit
+) {
     val context = LocalContext.current
-    var frame by remember(uri) { mutableStateOf<Bitmap?>(null) }
-    var error by remember(uri) { mutableStateOf<String?>(null) }
-    var pos by remember(uri) { mutableIntStateOf(0) }
-    var paused by remember(uri) { mutableStateOf(false) }
-    var indexed by remember(uri) { mutableStateOf(false) }
+    var frame by remember(uri, remote) { mutableStateOf<Bitmap?>(null) }
+    var error by remember(uri, remote) { mutableStateOf<String?>(null) }
+    var pos by remember(uri, remote) { mutableIntStateOf(0) }
+    var paused by remember(uri, remote) { mutableStateOf(false) }
+    var indexed by remember(uri, remote) { mutableStateOf(false) }
+    var buffering by remember(uri, remote) { mutableStateOf(false) }
+    var streamGot by remember(uri, remote) { mutableStateOf(0L) }
+    var streamTotal by remember(uri, remote) { mutableStateOf(0L) }
+    var streamDone by remember(uri, remote) { mutableStateOf(remote == null) }
+    var indexedFrames by remember(uri, remote) { mutableIntStateOf(0) }
+    var saved by remember(uri, remote) { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    // Streamed clips land in cacheDir — a growing file the player re-indexes.
+    val tmpFile = remember(remote) {
+        remote?.let {
+            java.io.File(context.cacheDir, "stream_${it.uniqueId}.part")
+                .apply { createNewFile() }
+        }
+    }
     // The uri can be deleted between the query and the tap — fail into the
     // error state instead of crashing out of composition.
-    val player = remember(uri) {
+    val player = remember(uri, remote) {
         runCatching {
-            AviMjpegPlayer(java.io.FileInputStream(
-                context.contentResolver.openFileDescriptor(uri, "r")!!.fileDescriptor).channel)
+            when {
+                uri != null -> AviMjpegPlayer(java.io.FileInputStream(
+                    context.contentResolver.openFileDescriptor(uri, "r")!!.fileDescriptor).channel)
+                tmpFile != null -> AviMjpegPlayer(java.io.FileInputStream(tmpFile).channel)
+                else -> null
+            }
         }.getOrNull()
     }
 
-    DisposableEffect(player) { onDispose { player?.close() } }
+    DisposableEffect(player) { onDispose { player?.close(); tmpFile?.delete() } }
 
     LaunchedEffect(player) {
         if (player == null) { error = "file unavailable"; return@LaunchedEffect }
         try {
-            player.index()
+            var fetchErr: String? = null
+            if (remote != null) {
+                launch(kotlinx.coroutines.Dispatchers.IO) {
+                    try {
+                        java.io.FileOutputStream(tmpFile!!).use { fos ->
+                            var lastMs = 0L
+                            when (val r = vm.streamFile(remote, fos) { got, total ->
+                                val now = System.currentTimeMillis()
+                                // Throttle: the callback fires per 32 KiB chunk.
+                                if (now - lastMs >= 300 || got >= total) {
+                                    lastMs = now
+                                    streamGot = got; streamTotal = total
+                                }
+                            }) {
+                                is GpsocketClient.DownloadResult.Success -> {}
+                                is GpsocketClient.DownloadResult.Refused ->
+                                    fetchErr = "camera refused — it may still be recording"
+                                is GpsocketClient.DownloadResult.Incomplete ->
+                                    fetchErr = "transfer stopped early"
+                                is GpsocketClient.DownloadResult.Failed ->
+                                    fetchErr = r.reason
+                            }
+                        }
+                    } finally {
+                        streamDone = true
+                    }
+                }
+            }
+            // Wait until something is playable: local clips index once;
+            // streams extend the index as chunks arrive.
+            if (remote == null) {
+                player.index()
+            } else if (isImage) {
+                while (!streamDone) delay(150)
+                fetchErr?.let { error = it; return@LaunchedEffect }
+                player.index()
+            } else {
+                while (player.frames.isEmpty() && !streamDone) {
+                    player.extendIndex()
+                    if (player.frames.isEmpty()) delay(150)
+                }
+                player.extendIndex()
+            }
+            fetchErr?.let { error = it; return@LaunchedEffect }
+            if (player.frames.isEmpty()) {
+                error = "no video frames"; return@LaunchedEffect
+            }
+            indexedFrames = player.frames.size
             indexed = true
             // Audio: PCM chunks feed a self-clocking AudioTrack; seeks move the
             // PCM read position to match the video frame time.
@@ -857,10 +964,22 @@ private fun PlayerDialog(uri: Uri, isImage: Boolean, onClose: () -> Unit) {
             var lastDecoded = -1
             try {
                 while (true) {
-                    if (pos >= player.frames.size) { paused = true }
+                    // Streaming: index whatever arrived since the last pass —
+                    // the scan resumes at the last complete chunk, so this is
+                    // ~one header read per iteration when idle.
+                    if (remote != null) {
+                        player.extendIndex()
+                        if (indexedFrames != player.frames.size)
+                            indexedFrames = player.frames.size
+                    }
+                    if (pos >= player.frames.size) {
+                        if (streamDone) { paused = true }   // real EOF
+                        else { buffering = true; delay(120); continue }
+                    }
                     // Decode when playing, or once after the slider moved while paused.
                     if (paused && pos == lastDecoded) { delay(80); continue }
                     if (pos >= player.frames.size) { delay(80); continue }
+                    buffering = false
                     frame = player.frameAt(pos)
                     lastDecoded = pos
                     if (paused) { delay(80); continue }
@@ -896,17 +1015,46 @@ private fun PlayerDialog(uri: Uri, isImage: Boolean, onClose: () -> Unit) {
                 )
                 else -> CircularProgressIndicator(Modifier.align(Alignment.Center))
             }
+            if (remote != null && (buffering || streamTotal > 0)) {
+                Text(
+                    if (buffering && streamTotal > 0)
+                        "Buffering — %.0f%%".format(streamGot * 100f / streamTotal)
+                    else if (buffering) "Buffering…"
+                    else "Streaming — %.0f%%".format(streamGot * 100f / streamTotal),
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.align(Alignment.TopStart)
+                        .padding(16.dp)
+                        .background(Color(0x66000000))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
             Row(Modifier.align(Alignment.TopEnd).padding(8.dp)) {
-                IconButton(onClick = { shareFile(context, uri, isImage) }) {
-                    Icon(Icons.Default.Share, contentDescription = "Share", tint = Color.White)
+                // A finished stream holds the whole file — adopt it into the
+                // gallery instead of re-pulling the bytes over the socket.
+                if (remote != null && streamDone && error == null) {
+                    IconButton(onClick = {
+                        scope.launch { saved = vm.saveStreamed(remote, tmpFile!!) }
+                    }, enabled = !saved) {
+                        Icon(
+                            Icons.Default.Save,
+                            contentDescription = "Save to device",
+                            tint = if (saved) MaterialTheme.colorScheme.primary else Color.White
+                        )
+                    }
+                }
+                if (uri != null) {
+                    IconButton(onClick = { shareFile(context, uri, isImage) }) {
+                        Icon(Icons.Default.Share, contentDescription = "Share", tint = Color.White)
+                    }
                 }
                 IconButton(onClick = onClose) {
                     Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
                 }
             }
             val pl = player
-            if (indexed && pl != null && pl.frames.size > 1) {
-                val count = pl.frames.size
+            if (indexed && pl != null && indexedFrames > 1) {
+                val count = indexedFrames
                 val skip = (1000L / pl.frameMs.coerceAtLeast(1)).toInt().coerceAtLeast(1)
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(16.dp)) {
                     Slider(
@@ -938,7 +1086,8 @@ private fun PlayerDialog(uri: Uri, isImage: Boolean, onClose: () -> Unit) {
                             Icon(Icons.Default.Forward10, contentDescription = "Forward 1 s", tint = Color.White)
                         }
                         Text(
-                            "%.1f / %.1f s".format(pos * pl.frameMs / 1000.0, pl.durationSec),
+                            "%.1f / %.1f s".format(pos * pl.frameMs / 1000.0,
+                                pl.probeDurationSec ?: pl.durationSec),
                             color = Color.White,
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.padding(start = 16.dp)

@@ -9,8 +9,10 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.juanm.easydashcam.EasyDashcamApp
+import com.juanm.easydashcam.core.download.ClipStore
 import com.juanm.easydashcam.core.download.DownloadService
 import com.juanm.easydashcam.core.net.GpsocketClient
+import com.juanm.easydashcam.core.session.CameraSession
 import com.juanm.easydashcam.core.settings.MenuParser
 import com.juanm.easydashcam.core.settings.SettingCategory
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -257,6 +259,39 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         ContextCompat.startForegroundService(
             getApplication(), DownloadService.downloadIntent(getApplication(), f))
     }
+
+    /**
+     * Pull a recording into [out] while it plays — progressive playback.
+     * Same wire path as a download, so it serializes behind any in-flight
+     * transfer on the socket's requestLock. No session.downloads updates:
+     * a preview isn't a download and must not churn the gallery.
+     */
+    suspend fun streamFile(
+        f: GpsocketClient.CameraFile,
+        out: java.io.OutputStream,
+        onProgress: (Long, Long) -> Unit
+    ): GpsocketClient.DownloadResult =
+        client.downloadFile(f, out, onProgress = onProgress)
+
+    /**
+     * Adopt a fully streamed temp file into the gallery — the bytes are
+     * already local, so saving is a copy, not a re-download.
+     */
+    suspend fun saveStreamed(f: GpsocketClient.CameraFile, src: java.io.File): Boolean =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                val dest = ClipStore.open(getApplication(), f) ?: return@runCatching false
+                val head = ByteArray(4)
+                java.io.FileInputStream(src).use { it.read(head, 0, 4) }
+                val isJpeg = head[0] == 0xFF.toByte() && head[1] == 0xD8.toByte()
+                dest.out.use { o -> src.inputStream().use { it.copyTo(o) } }
+                ClipStore.commit(getApplication(), dest, isJpeg)
+                session.updateDownload(f.uniqueId,
+                    CameraSession.DownloadState(src.length(), src.length(), done = true))
+                refreshLocalFiles()
+                true
+            }.getOrDefault(false)
+        }
 
     private fun persistFiles(files: List<GpsocketClient.CameraFile>) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
