@@ -29,6 +29,9 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     /** Download progress per record id, fed by DownloadService via the session. */
     val downloads = session.downloads
 
+    /** Address of the connected camera — RTSP targets the same host. */
+    val cameraHost = session.cameraHost
+
     /** uniqueId → MediaStore uri for files already on the phone. */
     private val _localFiles = MutableStateFlow<Map<Int, Uri>>(emptyMap())
     val localFiles: StateFlow<Map<Int, Uri>> = _localFiles

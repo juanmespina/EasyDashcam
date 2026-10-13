@@ -87,10 +87,25 @@ class CameraSession(context: Context) {
         }
     }
 
+    /** The camera address that answered last — other firmware families run
+     *  their hotspot on different subnets (192.168.1.1, 10.0.0.1, …). */
+    private val _cameraHost = MutableStateFlow(GpsocketClient.CAMERA_HOST)
+    val cameraHost: StateFlow<String> = _cameraHost
+
     suspend fun connect(): Boolean {
         userDisconnected = false
-        if (!binder.bindToWifi()) return false
-        client.connect()
+        // On the camera hotspot the DHCP gateway IS the camera — try it
+        // first, then the address this firmware family is known to use.
+        val gateway = binder.bindToWifi() ?: return false
+        for (host in listOf(gateway, GpsocketClient.CAMERA_HOST).distinct()) {
+            client.connect(host)
+            if (client.state.replayCache.firstOrNull()
+                    is GpsocketClient.State.Connected) {
+                _cameraHost.value = host
+                break
+            }
+        }
+        // A failed attempt surfaces as State.Error through the normal flow.
         return true
     }
 

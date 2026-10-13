@@ -118,10 +118,11 @@ class GpsocketClient(
     var lastMenuXml: String? = null
         private set
 
-    suspend fun connect() {
+    suspend fun connect(host: String? = null) {
         if (_state.replayCache.firstOrNull() is State.Connecting ||
             _state.replayCache.firstOrNull() is State.Connected
         ) return
+        val target = host ?: this.host
         _state.emit(State.Connecting)
         try {
             withContext(Dispatchers.IO) {
@@ -130,7 +131,7 @@ class GpsocketClient(
                 // The camera's status blob arrives ~1/s; if nothing arrives for
                 // 15 s the link is dead (a dropped hotspot never sends FIN).
                 s.soTimeout = 15_000
-                s.connect(InetSocketAddress(host, port), 5000)
+                s.connect(InetSocketAddress(target, port), 5000)
                 socket = s
                 input = BufferedInputStream(s.getInputStream(), 65536)
                 output = BufferedOutputStream(s.getOutputStream(), 8192)

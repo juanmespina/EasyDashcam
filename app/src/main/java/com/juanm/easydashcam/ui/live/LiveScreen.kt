@@ -60,13 +60,15 @@ import java.util.Locale
 @Composable
 fun LiveScreen(vm: CameraViewModel) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val cameraHost by vm.cameraHost.collectAsStateWithLifecycle()
     ConnectionGate(state = state, onConnect = vm::connect) {
-        LivePlayer(vm::enterPreviewMode, vm::exitPreviewMode, vm::postNotice)
+        LivePlayer(cameraHost, vm::enterPreviewMode, vm::exitPreviewMode, vm::postNotice)
     }
 }
 
 @Composable
 private fun LivePlayer(
+    cameraHost: String,
     onArmed: suspend () -> Unit,
     onDisarmed: () -> Unit,
     onNotice: (String) -> Unit
@@ -74,7 +76,7 @@ private fun LivePlayer(
     var status by remember { mutableStateOf<Status>(Status.Buffering) }
     var frame by remember { mutableStateOf<Bitmap?>(null) }
     var muted by remember { mutableStateOf(false) }
-    val client = remember { RtspMjpegClient() }
+    val client = remember(cameraHost) { RtspMjpegClient(cameraHost) }
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
