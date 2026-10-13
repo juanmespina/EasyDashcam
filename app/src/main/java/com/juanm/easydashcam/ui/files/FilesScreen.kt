@@ -174,20 +174,29 @@ private fun FilesList(vm: CameraViewModel) {
         // Locked (L) records can't be served — the camera feff-refuses their
         // downloads and Viidure's captures never show one transferred either.
         val lockedCount = files?.count { it.kindChar == 'L' } ?: 0
-        val list = files?.let { all ->
-            val servable = all.filter { it.kindChar != 'L' }
-            val byKind = when (filter) {
-                MediaFilter.ALL -> servable
-                MediaFilter.VIDEOS -> servable.filter { it.kindChar != 'J' }
-                MediaFilter.PHOTOS -> servable.filter { it.kindChar == 'J' }
-                MediaFilter.ON_DEVICE -> servable.filter { localFiles.containsKey(it.uniqueId) }
+        // downloads emits a new map per 32 KiB chunk — without remember(),
+        // the ~800-item filter/group/sort below reran per chunk on the main
+        // thread for the whole transfer.
+        val list = remember(files, filter, dayFilter, localFiles) {
+            files?.let { all ->
+                val servable = all.filter { it.kindChar != 'L' }
+                val byKind = when (filter) {
+                    MediaFilter.ALL -> servable
+                    MediaFilter.VIDEOS -> servable.filter { it.kindChar != 'J' }
+                    MediaFilter.PHOTOS -> servable.filter { it.kindChar == 'J' }
+                    MediaFilter.ON_DEVICE -> servable.filter {
+                        localFiles.containsKey(it.uniqueId)
+                    }
+                }
+                if (dayFilter == null) byKind
+                else byKind.filter { it.timestamp?.toLocalDate() == dayFilter }
             }
-            if (dayFilter == null) byKind
-            else byKind.filter { it.timestamp?.toLocalDate() == dayFilter }
         }
         // Everything visible that isn't already on the phone or in flight.
-        val pending = list.orEmpty().filter {
-            localFiles[it.uniqueId] == null && downloads[it.uniqueId] == null
+        val pending = remember(list, localFiles, downloads) {
+            list.orEmpty().filter {
+                localFiles[it.uniqueId] == null && downloads[it.uniqueId] == null
+            }
         }
         LaunchedEffect(batchTrigger) {
             if (batchTrigger > 0) pending.forEach(vm::download)
@@ -295,9 +304,12 @@ private fun FilesList(vm: CameraViewModel) {
             else -> {
                 // Days always run newest-first; the sort option orders within
                 // each day so the structure stays readable.
-                val grouped = list.groupBy { it.timestamp?.toLocalDate() }
-                    .entries.sortedWith(
-                        compareBy(nullsLast(reverseOrder<LocalDate>())) { it.key })
+                val grouped = remember(list, sortMode) {
+                    list.groupBy { it.timestamp?.toLocalDate() }
+                        .entries.sortedWith(
+                            compareBy(nullsLast(reverseOrder<LocalDate>())) { it.key })
+                        .map { it.key to it.value.sortedWith(sortMode.comparator) }
+                }
                 if (viewMode == ViewMode.GRID) {
                     LazyVerticalGrid(
                         columns = GridCells.Adaptive(minSize = 170.dp),
@@ -308,7 +320,7 @@ private fun FilesList(vm: CameraViewModel) {
                                 DayHeader(day)
                             }
                             itemsIndexed(
-                                dayFiles.sortedWith(sortMode.comparator),
+                                dayFiles,
                                 key = { i, f -> "${f.uniqueId}_${f.timestamp}_$i" }
                             ) { _, f ->
                                 val uri = localFiles[f.uniqueId]
@@ -336,7 +348,7 @@ private fun FilesList(vm: CameraViewModel) {
                     LazyColumn(Modifier.fillMaxSize()) {
                         grouped.forEach { (day, dayFiles) ->
                             item(key = "h$day") { DayHeader(day) }
-                            val sorted = dayFiles.sortedWith(sortMode.comparator)
+                            val sorted = dayFiles
                             sorted.forEachIndexed { i, f ->
                                 val uri = localFiles[f.uniqueId]
                                 item(key = "${f.uniqueId}_${f.timestamp}_$i") {
@@ -452,7 +464,9 @@ private object ClipMetaCache {
                     }
                 }
             }.getOrDefault(ClipMeta(null, null))
-        }.also { cache.put(uri.toString(), it) }
+            // Don't cache failures — a transient error (e.g. file still
+            // being finalized) shouldn't hide the thumbnail forever.
+        }.also { if (it.thumb != null || it.durationSec != null) cache.put(uri.toString(), it) }
 }
 
 private fun shareFile(context: android.content.Context, uri: Uri, isImage: Boolean) {
@@ -747,24 +761,32 @@ private fun DownloadTrailing(
 @Composable
 private fun PlayerDialog(uri: Uri, isImage: Boolean, onClose: () -> Unit) {
     val context = LocalContext.current
-    var frame by remember { mutableStateOf<Bitmap?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var pos by remember { mutableIntStateOf(0) }
-    var paused by remember { mutableStateOf(false) }
-    var indexed by remember { mutableStateOf(false) }
+    var frame by remember(uri) { mutableStateOf<Bitmap?>(null) }
+    var error by remember(uri) { mutableStateOf<String?>(null) }
+    var pos by remember(uri) { mutableIntStateOf(0) }
+    var paused by remember(uri) { mutableStateOf(false) }
+    var indexed by remember(uri) { mutableStateOf(false) }
+    // The uri can be deleted between the query and the tap — fail into the
+    // error state instead of crashing out of composition.
     val player = remember(uri) {
-        AviMjpegPlayer(java.io.FileInputStream(
-            context.contentResolver.openFileDescriptor(uri, "r")!!.fileDescriptor).channel)
+        runCatching {
+            AviMjpegPlayer(java.io.FileInputStream(
+                context.contentResolver.openFileDescriptor(uri, "r")!!.fileDescriptor).channel)
+        }.getOrNull()
     }
 
-    DisposableEffect(uri) { onDispose { player.close() } }
+    DisposableEffect(player) { onDispose { player?.close() } }
 
-    LaunchedEffect(uri) {
+    LaunchedEffect(player) {
+        if (player == null) { error = "file unavailable"; return@LaunchedEffect }
         try {
             player.index()
             indexed = true
             // Audio: PCM chunks feed a self-clocking AudioTrack; seeks move the
             // PCM read position to match the video frame time.
+            // Hoisted so the outer finally can stop() a write stuck on a
+            // full buffer — a blocking write doesn't observe cancellation.
+            var audioTrack: AudioTrack? = null
             val audioJob = if (!player.hasAudio) null else launch {
                 val buf = ByteArray(8192)
                 val track = AudioTrack.Builder()
@@ -779,6 +801,7 @@ private fun PlayerDialog(uri: Uri, isImage: Boolean, onClose: () -> Unit) {
                         .build())
                     .setTransferMode(AudioTrack.MODE_STREAM)
                     .build()
+                audioTrack = track
                 if (track.state != AudioTrack.STATE_INITIALIZED) { track.release(); return@launch }
                 var bytePos = 0L
                 var lastVideoPos = -1
@@ -820,6 +843,9 @@ private fun PlayerDialog(uri: Uri, isImage: Boolean, onClose: () -> Unit) {
                 }
             } finally {
                 audioJob?.cancel()
+                // Unblock a write() stuck on a full buffer — it doesn't
+                // observe cancellation, so it would delay the release.
+                audioTrack?.let { runCatching { it.stop() } }
             }
         } catch (e: CancellationException) {
             throw e
@@ -852,9 +878,10 @@ private fun PlayerDialog(uri: Uri, isImage: Boolean, onClose: () -> Unit) {
                     Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
                 }
             }
-            if (indexed && player.frames.size > 1) {
-                val count = player.frames.size
-                val skip = (1000L / player.frameMs.coerceAtLeast(1)).toInt().coerceAtLeast(1)
+            val pl = player
+            if (indexed && pl != null && pl.frames.size > 1) {
+                val count = pl.frames.size
+                val skip = (1000L / pl.frameMs.coerceAtLeast(1)).toInt().coerceAtLeast(1)
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(16.dp)) {
                     Slider(
                         value = pos.toFloat(),
@@ -885,7 +912,7 @@ private fun PlayerDialog(uri: Uri, isImage: Boolean, onClose: () -> Unit) {
                             Icon(Icons.Default.Forward10, contentDescription = "Forward 1 s", tint = Color.White)
                         }
                         Text(
-                            "%.1f / %.1f s".format(pos * player.frameMs / 1000.0, player.durationSec),
+                            "%.1f / %.1f s".format(pos * pl.frameMs / 1000.0, pl.durationSec),
                             color = Color.White,
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.padding(start = 16.dp)
