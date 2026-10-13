@@ -54,18 +54,35 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
     /** Total clip duration in seconds, for the seek bar label. */
     val durationSec: Double get() = frames.size * frameMs / 1000.0
 
+    /** Duration from the avih header (total frames × frame interval), filled
+     *  by a probe pass — no full index needed. */
+    var probeDurationSec: Double? = null
+        private set
+
+    /** Byte range of the first video frame — filled by probe/index. */
+    var thumbFrame: FrameRef? = null
+        private set
+
     /**
      * Scan the file once: reads chunk headers only, so a 60 MB clip indexes
      * in milliseconds. Throws [AviException] on unparseable input.
      */
-    suspend fun index() = withContext(Dispatchers.IO) {
+    suspend fun index() = indexWalk(fullIndex = true)
+
+    /**
+     * Cheap header pass — avih duration + first frame reference only, no
+     * 'movi' walk. Used to build list thumbnails without indexing every chunk.
+     */
+    suspend fun probe() = indexWalk(fullIndex = false)
+
+    private suspend fun indexWalk(fullIndex: Boolean) = withContext(Dispatchers.IO) {
         ch.position(0)
         val magic = readBytes(4) ?: throw AviException("empty file")
 
         // Raw JPEG payload (photo records): no RIFF wrapper.
         if (magic[0] == 0xFF.toByte() && magic[1] == 0xD8.toByte()) {
-            frames = listOf(FrameRef(0, ch.size().toInt()))
-            frameMs = 0
+            thumbFrame = FrameRef(0, ch.size().toInt())
+            if (fullIndex) { frames = listOf(thumbFrame!!); frameMs = 0 }
             return@withContext
         }
         if (!magic.contentEquals("RIFF".toByteArray())) throw AviException("not RIFF/AVI")
@@ -73,6 +90,7 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
         if (!readBytes(4)!!.contentEquals("AVI ".toByteArray())) throw AviException("not AVI")
 
         var usecPerFrame = 66_666L
+        var totalFrames = 0L
         var pos = 12L
         var inMovi = false
         var moviEnd = 0L
@@ -99,7 +117,12 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
                     // chunks hit the normal fourcc handlers below.
                 }
                 id.contentEquals("avih".toByteArray()) -> {
-                    usecPerFrame = u32le(readBytes(4)!!)
+                    // dwMicroSecPerFrame@0 … dwTotalFrames@16
+                    val body = readBytes(len.coerceAtMost(56).toInt())
+                    if (body != null) {
+                        usecPerFrame = u32le(body, 0)
+                        if (body.size >= 20) totalFrames = u32le(body, 16)
+                    }
                     pos = chunkEnd
                 }
                 id.contentEquals("strh".toByteArray()) -> {
@@ -130,6 +153,7 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
                 inMovi && isVideoChunk(id) -> {
                     refs += FrameRef(pos, len.toInt())
                     pos = chunkEnd
+                    if (!fullIndex) break   // probe: first frame is enough
                 }
                 inMovi && isAudioChunk(id) -> {
                     audio += FrameRef(pos, len.toInt())
@@ -139,6 +163,9 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
             }
             if (inMovi && pos >= moviEnd) break
         }
+        thumbFrame = refs.firstOrNull()
+        if (totalFrames > 0) probeDurationSec = totalFrames * usecPerFrame / 1e6
+        if (!fullIndex) return@withContext
         if (refs.isEmpty()) throw AviException("no video frames in file")
         frameMs = (usecPerFrame / 1000).coerceIn(1, 500)
         frames = refs
@@ -159,7 +186,7 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
 
     /** First frame downsampled to ~[maxDim] px — for grid thumbnails. */
     suspend fun thumbnail(maxDim: Int): Bitmap? = withContext(Dispatchers.IO) {
-        val ref = frames.firstOrNull() ?: return@withContext null
+        val ref = thumbFrame ?: frames.firstOrNull() ?: return@withContext null
         ch.position(ref.offset)
         val jpeg = readBytes(ref.length) ?: return@withContext null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }

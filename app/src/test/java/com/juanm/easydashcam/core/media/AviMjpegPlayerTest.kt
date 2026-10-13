@@ -46,10 +46,13 @@ class AviMjpegPlayerTest {
         audioChunks: List<ByteArray> = emptyList(),
         audioRate: Int = 16000,
         audioStrhRate: Int = 0,
+        totalFrames: Int = 0,
     ): ByteArray {
         val out = ByteArrayOutputStream()
 
-        out.chunk("avih", le32(avihUsec) + ByteArray(52))
+        val avih = le32(avihUsec) + ByteArray(52)
+        le32(totalFrames).copyInto(avih, 16)
+        out.chunk("avih", avih)
 
         val strh = "vids".toByteArray() + ByteArray(52)
         le32(strhScale).copyInto(strh, 20)
@@ -214,6 +217,28 @@ class AviMjpegPlayerTest {
         assertEquals(32L, p.audioPosForMs(1))   // 1 ms = 32 B @ 32 000 B/s
         // A position past the audio end clamps to the stream length.
         assertEquals(p.audioByteLen, p.audioPosForMs(999_999))
+        p.close()
+    }
+
+    @Test
+    fun `probe reads duration and first frame without indexing`() = runBlocking {
+        val p = playerFor(buildAvi(avihUsec = 200_000, totalFrames = 30,
+            frames = listOf(jpeg(1), jpeg(2), jpeg(3))))
+        p.probe()
+        assertEquals(6.0, p.probeDurationSec!!, 0.01)
+        assert(p.thumbFrame != null)
+        // No 'movi' walk — the frame list stays empty.
+        assert(p.frames.isEmpty())
+        p.close()
+    }
+
+    @Test
+    fun `probe on raw jpeg exposes the frame`() = runBlocking {
+        val jpg = jpeg(42)
+        val p = playerFor(jpg)
+        p.probe()
+        assertEquals(0L, p.thumbFrame!!.offset)
+        assertEquals(jpg.size, p.thumbFrame!!.length)
         p.close()
     }
 
