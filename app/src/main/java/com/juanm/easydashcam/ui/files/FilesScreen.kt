@@ -1030,9 +1030,11 @@ private fun PlayerDialog(
                 )
             }
             Row(Modifier.align(Alignment.TopEnd).padding(8.dp)) {
-                // A finished stream holds the whole file — adopt it into the
-                // gallery instead of re-pulling the bytes over the socket.
-                if (remote != null && streamDone && error == null) {
+                // Adopt the streamed bytes into the gallery instead of
+                // re-pulling them over the socket. Allowed once frames are
+                // indexed — a truncated AVI still plays to its last whole
+                // chunk, so the user can keep just the part they watched.
+                if (remote != null && error == null && (streamDone || indexed)) {
                     IconButton(onClick = {
                         scope.launch { saved = vm.saveStreamed(remote, tmpFile!!) }
                     }, enabled = !saved) {
