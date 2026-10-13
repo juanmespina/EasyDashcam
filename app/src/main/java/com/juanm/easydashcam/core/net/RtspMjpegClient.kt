@@ -83,22 +83,34 @@ class RtspMjpegClient(
                 val i = line.indexOf(':'); if (i > 0) headers[line.substring(0, i).trim().lowercase()] = line.substring(i + 1).trim()
             }
             headers["content-length"]?.toIntOrNull()?.let { n ->
-                val body = CharArray(n); rd.read(body)
-                headers["#body"] = String(body)
+                // read(char[]) is a short-read — loop until the body is full
+                // or the stream ends, or a truncated SDP gets parsed.
+                val body = CharArray(n)
+                var got = 0
+                while (got < n) {
+                    val r = rd.read(body, got, n - got)
+                    if (r < 0) break
+                    got += r
+                }
+                headers["#body"] = String(body, 0, got)
             }
             return headers
         }
 
-        var setup: Map<String, String> = emptyMap()
         var rtpSock: DatagramSocket? = null
         var rtcpSock: DatagramSocket? = null
         // Per-track (rtp, rtcp, server_port) — captured inside the SETUP loop
         // because `setup` is overwritten on every iteration.
         val trackSocks = ArrayList<Triple<DatagramSocket, DatagramSocket, Int>>()
         for (attempt in 1..3) {
+            // Sockets stay local until the attempt succeeds — a mid-SETUP
+            // failure previously leaked them (unreachable from stop()) and
+            // left stale entries in trackSocks.
+            val attemptTracks = ArrayList<Triple<DatagramSocket, DatagramSocket, Int>>()
             try {
                 cseq = 0   // Viidure restarts at 1 per session; the firmware may
                            // reject out-of-sequence cseq on a fresh TCP conn
+                sessionId = null   // …and must not send a dead Session header
                 val s = Socket(host, port).also { it.soTimeout = 8000; ctrl = it }
                 rd = BufferedReader(InputStreamReader(s.getInputStream(), Charsets.US_ASCII))
                 wr = s.getOutputStream()
@@ -126,26 +138,43 @@ class RtspMjpegClient(
                     val rs = DatagramSocket(0).also { it.soTimeout = 8000 }
                     val cs = try { DatagramSocket(rs.localPort + 1) } catch (_: Exception) { DatagramSocket(0) }
                     cs.soTimeout = 8000
-                    setup = request(
+                    val setup = request(
                         rd!!, wr!!, "SETUP", "$base/$track",
                         "Transport: RTP/AVP/UDP;unicast;client_port=${rs.localPort}-${cs.localPort}\r\n"
                     )
                     sessionId = setup["session"]?.substringBefore(';')
-                    trackSocks += Triple(rs, cs, setup["transport"]?.let {
+                    attemptTracks += Triple(rs, cs, setup["transport"]?.let {
                         Regex("""server_port=(\d+)""").find(it)?.groupValues?.get(1)?.toInt()
                     } ?: -1)
-                    if (i == 0) { rtpSock = rs; rtcpSock = cs; rtp = rs; rtcp = cs }
-                    else if (audioPt != null && audioRtp == null) { audioRtp = rs; extraSockets += cs }
-                    else { extraSockets += rs; extraSockets += cs }
+                    if (i == 0) { rtpSock = rs; rtcpSock = cs }
+                    else if (audioPt != null && audioRtp == null) audioRtp = rs
+                    else { /* extra track sockets live in attemptTracks */ }
                 }
                 request(rd!!, wr!!, "PLAY", "$base/", "Range: npt=0.000-\r\n")
+                // Handshake succeeded — commit this attempt's sockets. stop()
+                // owns every socket that isn't the video rtp/rtcp pair or the
+                // audio socket, so they all land in extraSockets.
+                trackSocks += attemptTracks
+                rtp = rtpSock; rtcp = rtcpSock
+                attemptTracks.forEach { (rs, cs, _) ->
+                    if (rs !== rtpSock && rs !== audioRtp) extraSockets += rs
+                    if (cs !== rtcpSock) extraSockets += cs
+                }
                 handshakeOk = true
                 break
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                attemptTracks.forEach {
+                    runCatching { it.first.close() }; runCatching { it.second.close() }
+                }
+                throw e
             } catch (e: Exception) {
                 lastError = e
                 DebugLogger.log("RTSP", "attempt $attempt failed: ${e.message}")
+                attemptTracks.forEach {
+                    runCatching { it.first.close() }; runCatching { it.second.close() }
+                }
                 runCatching { ctrl?.close() }; ctrl = null
-                stop()
+                audioRtp = null
                 if (attempt < 3) delay(2000)
             }
         }
@@ -207,7 +236,7 @@ class RtspMjpegClient(
                 val jpegType = d[p].toInt() and 0xFF
                 val q = d[p + 1].toInt() and 0xFF
                 p += 4
-                if (jpegType >= 64) p++                        // restart marker hdr
+                if (jpegType >= 64) p += 4                     // restart marker hdr (2B type + 2B data)
                 if (q >= 100) {                                // per-packet quant tables
                     val qtLen = (d[p + 2].toInt() and 0xFF shl 8) or (d[p + 3].toInt() and 0xFF)
                     p += 4 + qtLen                             // DRI(2)+len(2)+tables
@@ -228,7 +257,10 @@ class RtspMjpegClient(
                 }
             }
         } finally {
+            // Join the keepalive so an in-flight OPTIONS can't interleave
+            // writes on ctrl with the TEARDOWN (bounded by the 8 s timeout).
             keepalive.cancel()
+            runCatching { keepalive.join() }
             audioJob.cancel()
             // TEARDOWN must go out before ctrl is closed — otherwise the camera
             // keeps a stale session and 404s the next SETUP.
