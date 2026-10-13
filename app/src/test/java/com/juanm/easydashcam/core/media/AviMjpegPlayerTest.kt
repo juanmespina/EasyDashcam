@@ -249,4 +249,39 @@ class AviMjpegPlayerTest {
         assert(!p.hasAudio)
         p.close()
     }
+
+    @Test
+    fun `extendIndex resumes where a truncated scan stopped`() = runBlocking {
+        // Simulate a streaming download: the file arrives in pieces and each
+        // pass must index only newly complete chunks.
+        val avi = buildAvi(frames = listOf(
+            ByteArray(500) { 1 }, ByteArray(500) { 2 }, ByteArray(500) { 3 }))
+        val f = File.createTempFile("avi-stream", ".bin")
+        f.deleteOnExit()
+        val writer = RandomAccessFile(f, "rw")
+        try {
+            // Cut mid-movi — the tail lands inside a chunk payload.
+            val cut = avi.size - 700
+            writer.write(avi, 0, cut)
+            val p = AviMjpegPlayer(writer.channel)
+
+            p.extendIndex()
+            val before = p.frames.size
+            assert(before in 0..2)
+            assert(!p.fullyIndexed)
+
+            // A dangling half-written chunk header must not crash or consume.
+            writer.write(avi, cut, 4)
+            p.extendIndex()
+            assertEquals(before, p.frames.size)
+
+            writer.write(avi, cut + 4, avi.size - cut - 4)
+            p.extendIndex()
+            assertEquals(3, p.frames.size)
+            assert(p.fullyIndexed)
+            p.close()
+        } finally {
+            writer.close()
+        }
+    }
 }

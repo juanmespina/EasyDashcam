@@ -63,53 +63,85 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
     var thumbFrame: FrameRef? = null
         private set
 
+    /** True once the scan reached the end of the 'movi' list. */
+    var fullyIndexed = false
+        private set
+
+    // Index state lives on the instance (not the scan call) so a growing
+    // file — a clip being streamed over the socket — resumes scanning where
+    // the previous pass ran out of data instead of rescanning from byte 0.
+    private var scanPos = 0L
+    private var riffSize = Long.MAX_VALUE
+    private var inMovi = false
+    private var moviEnd = Long.MAX_VALUE
+    private var streamIsAudio = false
+    private var usecPerFrame = 66_666L
+    private var totalFrames = 0L
+    private var headerDone = false
+    private val videoRefs = ArrayList<FrameRef>()
+    private val audioRefsFound = ArrayList<FrameRef>()
+
     /**
      * Scan the file once: reads chunk headers only, so a 60 MB clip indexes
      * in milliseconds. Throws [AviException] on unparseable input.
      */
-    suspend fun index() = indexWalk(fullIndex = true)
+    suspend fun index() {
+        scan(stopAfterFirstFrame = false)
+        if (frames.isEmpty()) throw AviException("no video frames in file")
+    }
 
     /**
      * Cheap header pass — avih duration + first frame reference only, no
      * 'movi' walk. Used to build list thumbnails without indexing every chunk.
      */
-    suspend fun probe() = indexWalk(fullIndex = false)
+    suspend fun probe() {
+        scan(stopAfterFirstFrame = true)
+    }
 
-    private suspend fun indexWalk(fullIndex: Boolean) = withContext(Dispatchers.IO) {
-        ch.position(0)
-        val magic = readBytes(4) ?: throw AviException("empty file")
+    /**
+     * Streaming playback: the file grows while it downloads. Resumes the
+     * scan at the last complete chunk and indexes whatever has arrived —
+     * returns the number of new video frames found. A partially written
+     * tail chunk is left for the next call.
+     */
+    suspend fun extendIndex(): Int = scan(stopAfterFirstFrame = false)
 
-        // Raw JPEG payload (photo records): no RIFF wrapper.
-        if (magic[0] == 0xFF.toByte() && magic[1] == 0xD8.toByte()) {
-            thumbFrame = FrameRef(0, ch.size().toInt())
-            if (fullIndex) { frames = listOf(thumbFrame!!); frameMs = 0 }
-            return@withContext
+    private suspend fun scan(stopAfterFirstFrame: Boolean): Int = withContext(Dispatchers.IO) {
+        val size = ch.size()
+        if (!headerDone) {
+            if (size < 4) return@withContext 0   // magic still in flight
+            val magic = readBytesAt(0, 4)!!
+
+            // Raw JPEG payload (photo records): no RIFF wrapper.
+            if (magic[0] == 0xFF.toByte() && magic[1] == 0xD8.toByte()) {
+                thumbFrame = FrameRef(0, size.toInt())
+                if (!stopAfterFirstFrame) { frames = listOf(thumbFrame!!); frameMs = 0 }
+                headerDone = true
+                fullyIndexed = true
+                return@withContext 1
+            }
+            if (!magic.contentEquals("RIFF".toByteArray())) throw AviException("not RIFF/AVI")
+            if (size < 12) return@withContext 0   // rest of RIFF header in flight
+            riffSize = u32le(readBytesAt(4, 4)!!) + 8
+            if (!readBytesAt(8, 4)!!.contentEquals("AVI ".toByteArray())) throw AviException("not AVI")
+            scanPos = 12
+            headerDone = true
         }
-        if (!magic.contentEquals("RIFF".toByteArray())) throw AviException("not RIFF/AVI")
-        val riffSize = u32le(readBytes(4)!!) + 8
-        if (!readBytes(4)!!.contentEquals("AVI ".toByteArray())) throw AviException("not AVI")
 
-        var usecPerFrame = 66_666L
-        var totalFrames = 0L
-        var pos = 12L
-        var inMovi = false
-        var moviEnd = 0L
-        var streamIsAudio = false
-        val refs = ArrayList<FrameRef>()
-        val audio = ArrayList<FrameRef>()
-
-        while (pos < riffSize) {
-            ch.position(pos)
-            val id = readBytes(4) ?: break
-            val len = u32le(readBytes(4)!!)
-            pos += 8
-            val chunkEnd = pos + len + (len and 1)   // RIFF word-aligns odd sizes
+        var added = 0
+        while (scanPos + 8 <= minOf(riffSize, size)) {
+            val hdr = readBytesAt(scanPos, 8)!!
+            val id = hdr.copyOfRange(0, 4)
+            val len = u32le(hdr, 4)
+            val chunkEnd = scanPos + 8 + len + (len and 1)   // RIFF word-aligns odd sizes
+            if (chunkEnd > size) break   // partial chunk — resume here next call
+            val content = scanPos + 8
 
             when {
                 id.contentEquals("LIST".toByteArray()) -> {
-                    val type = readBytes(4) ?: break
-                    pos += 4
-                    if (type.contentEquals("movi".toByteArray())) {
+                    val type = if (len >= 4) readBytesAt(content, 4) else null
+                    scanPos = content + 4
+                    if (type != null && type.contentEquals("movi".toByteArray())) {
                         inMovi = true
                         moviEnd = chunkEnd
                     }
@@ -118,28 +150,28 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
                 }
                 id.contentEquals("avih".toByteArray()) -> {
                     // dwMicroSecPerFrame@0 … dwTotalFrames@16
-                    val body = readBytes(len.coerceAtMost(56).toInt())
+                    val body = readBytesAt(content, len.coerceAtMost(56).toInt())
                     if (body != null) {
                         usecPerFrame = u32le(body, 0)
                         if (body.size >= 20) totalFrames = u32le(body, 16)
                     }
-                    pos = chunkEnd
+                    scanPos = chunkEnd
                 }
                 id.contentEquals("strh".toByteArray()) -> {
                     // fccType@0 tells 'vids' from 'auds' — an audio stream's
                     // dwScale/dwRate must NOT overwrite video timing.
-                    val body = readBytes(len.coerceAtMost(64).toInt())
+                    val body = readBytesAt(content, len.coerceAtMost(64).toInt())
                     streamIsAudio = body != null &&
                         body.copyOfRange(0, 4).contentEquals("auds".toByteArray())
                     if (body != null && !streamIsAudio && len >= 28) {
                         val scale = u32le(body, 20); val rate = u32le(body, 24)
                         if (rate > 0) usecPerFrame = scale * 1_000_000 / rate
                     }
-                    pos = chunkEnd
+                    scanPos = chunkEnd
                 }
                 // WAVEFORMATEX: tag@0 | channels@2 | rate@4 | avgBps@8
                 id.contentEquals("strf".toByteArray()) -> {
-                    val body = if (len >= 10) readBytes(len.coerceAtMost(16).toInt()) else null
+                    val body = if (len >= 10) readBytesAt(content, len.coerceAtMost(16).toInt()) else null
                     if (streamIsAudio && body != null) {
                         val tag = (body[0].toInt() and 0xFF) or (body[1].toInt() and 0xFF shl 8)
                         if (tag == 1) {   // PCM — anything else can't go to AudioTrack
@@ -148,32 +180,40 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
                             audioBytesPerSec = u32le(body, 8)
                         }
                     }
-                    pos = chunkEnd
+                    scanPos = chunkEnd
                 }
                 inMovi && isVideoChunk(id) -> {
-                    refs += FrameRef(pos, len.toInt())
-                    pos = chunkEnd
-                    if (!fullIndex) break   // probe: first frame is enough
+                    videoRefs += FrameRef(content, len.toInt())
+                    added++
+                    scanPos = chunkEnd
+                    if (stopAfterFirstFrame) break   // probe: first frame is enough
                 }
                 inMovi && isAudioChunk(id) -> {
-                    audio += FrameRef(pos, len.toInt())
-                    pos = chunkEnd
+                    audioRefsFound += FrameRef(content, len.toInt())
+                    scanPos = chunkEnd
                 }
-                else -> pos = chunkEnd
+                else -> scanPos = chunkEnd
             }
-            if (inMovi && pos >= moviEnd) break
+            if (inMovi && scanPos >= moviEnd) { fullyIndexed = true; break }
         }
-        thumbFrame = refs.firstOrNull()
+        if (scanPos >= riffSize) fullyIndexed = true
+        if (!stopAfterFirstFrame) {
+            // Bind the live lists — during streaming they keep growing, so
+            // readers must see the same object rather than a snapshot.
+            frames = videoRefs
+            audioRefs = audioRefsFound
+        }
+        if (thumbFrame == null) thumbFrame = videoRefs.firstOrNull()
         if (totalFrames > 0) probeDurationSec = totalFrames * usecPerFrame / 1e6
-        if (!fullIndex) return@withContext
-        if (refs.isEmpty()) throw AviException("no video frames in file")
-        frameMs = (usecPerFrame / 1000).coerceIn(1, 500)
-        frames = refs
-        audioRefs = audio
-        audioStarts = LongArray(audio.size)
-        var acc = 0L
-        audio.forEachIndexed { i, r -> audioStarts[i] = acc; acc += r.length }
-        audioByteLen = acc
+        if (videoRefs.isNotEmpty()) frameMs = (usecPerFrame / 1000).coerceIn(1, 500)
+        // Cumulative audio offsets — rebuilt only when the audio index grew.
+        if (audioStarts.size != audioRefsFound.size) {
+            audioStarts = LongArray(audioRefsFound.size)
+            var acc = 0L
+            audioRefsFound.forEachIndexed { i, r -> audioStarts[i] = acc; acc += r.length }
+            audioByteLen = acc
+        }
+        added
     }
 
     /** Decode frame [i]; null when the JPEG is corrupt. Safe to call from IO. */
@@ -231,12 +271,6 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
 
     private fun isAudioChunk(id: ByteArray) =
         id[2] == 'w'.code.toByte() && id[3] == 'b'.code.toByte()
-
-    private fun readBytes(n: Int): ByteArray? {
-        val buf = ByteBuffer.allocate(n)
-        while (buf.hasRemaining()) if (ch.read(buf) < 0) return null
-        return buf.array()
-    }
 
     /** Positional read — doesn't touch the channel's file position, so the
      *  video decode loop and the audio feeder can share [ch] without a lock. */
