@@ -75,6 +75,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                     settingsLoadedAt = 0
                     _files.value = null
                     _settings.value = null
+                    session.clearDownloads()
                 }
             }
         }
@@ -82,9 +83,13 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             // ~1 Hz heartbeat/status frames flood the log — record them only
             // when the payload changes, in full. That diff is what the status
             // blob (recording state, storage %, GPS if any) decodes from.
+            // 0x0503 download chunks are bulk data (each payload differs, so
+            // the dedupe below would log all ~1900 of them per clip).
+            val silentCmds = setOf(0x0503)
             val quietCmds = setOf(0x0100, 0x0303, 0x0304)
             val lastSeen = HashMap<Int, ByteArray>()
             client.frames.collect { f ->
+                if (f.cmd in silentCmds) return@collect
                 if (f.cmd in quietCmds) {
                     if (lastSeen[f.cmd].contentEquals(f.payload)) return@collect
                     lastSeen[f.cmd] = f.payload
@@ -105,8 +110,6 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
-
-    fun localFile(f: GpsocketClient.CameraFile): Uri? = _localFiles.value[f.uniqueId]
 
     /** Re-scan Movies/EasyDashcam for clips we already downloaded. */
     fun refreshLocalFiles() {
@@ -133,6 +136,11 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             _localFiles.value = out
+            // Reconcile: a "done" entry whose MediaStore file was deleted
+            // should become downloadable again, not marked downloaded forever.
+            session.downloads.value.forEach { (uid, d) ->
+                if (d.done && uid !in out) session.removeDownload(uid)
+            }
         }
     }
 

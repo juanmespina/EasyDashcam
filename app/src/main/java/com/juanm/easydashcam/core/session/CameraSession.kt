@@ -42,6 +42,17 @@ class CameraSession(context: Context) {
         _downloads.update { it + (id to state) }
     }
 
+    /** Forget a transfer — e.g. its local file was deleted and the record
+     *  should become downloadable again. */
+    fun removeDownload(id: Int) {
+        _downloads.update { it - id }
+    }
+
+    /** Drop all transfer state — a reconnect may be looking at a new card. */
+    fun clearDownloads() {
+        _downloads.value = emptyMap()
+    }
+
     // Auto-reconnect: once a connection succeeded, a Wi-Fi network coming back
     // (camera rebooted, hotspot re-joined) re-arms the socket — unless the user
     // explicitly disconnected.
