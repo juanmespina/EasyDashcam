@@ -262,6 +262,9 @@ class GpsocketClient(
             _frames.collect { if (it.cmd == cmd) ch.trySend(it) }
         }
         return try {
+            // Drop stragglers from earlier queries — param replies are
+            // positional, so a late reply would misalign every next value.
+            while (ch.tryReceive().isSuccess) {}
             send()
             val out = ArrayList<Frame>(count)
             runCatching {
@@ -312,7 +315,10 @@ class GpsocketClient(
                     writeArgs(CMD_GET_PARAM,
                         ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(id).array())
                 }
-                out[id] = r.firstOrNull()?.payload ?: ByteArray(0)
+                // type-3 frames are error replies (feff/f8ff) — they echo the
+                // request cmd, so a refusal would otherwise become the "value".
+                out[id] = r.firstOrNull()?.takeIf { it.type == 2 }?.payload
+                    ?: ByteArray(0)
             }
             out
         }
@@ -325,7 +331,8 @@ class GpsocketClient(
                 (paramId and 0xFF).toByte(), (paramId shr 8 and 0xFF).toByte(),
                 0, 0, 0x01, (value and 0xFF).toByte()
             )
-            exchange(CMD_SET_PARAM, 1, timeoutMs) { writeArgs(CMD_SET_PARAM, args) }.isNotEmpty()
+            exchange(CMD_SET_PARAM, 1, timeoutMs) { writeArgs(CMD_SET_PARAM, args) }
+                .any { it.type == 2 }   // type-3 reply = refused, not an ack
         }
 
     /** Fetch the settings menu XML (chunks of ~498 B + empty terminator). */
@@ -336,15 +343,19 @@ class GpsocketClient(
         }
         try {
             writeBare(CMD_MENU_XML)
-            val sb = StringBuilder()
+            val raw = ByteArrayOutputStream()
             kotlinx.coroutines.withTimeout(timeoutMs) {
                 while (true) {
                     val f = ch.receive()
+                    if (f.type == 3) throw java.io.IOException("menu request refused")
                     if (f.payload.isEmpty()) break
-                    sb.append(String(f.payload, Charsets.UTF_8))
+                    // Chunk boundaries can split multi-byte UTF-8 — decode
+                    // once after the terminator, not per chunk.
+                    raw.write(f.payload)
                 }
             }
-            sb.toString().also { lastMenuXml = it }
+            val sb = String(raw.toByteArray(), Charsets.UTF_8)
+            sb.also { lastMenuXml = it }
         } finally {
             job.cancel()
         }
@@ -353,7 +364,8 @@ class GpsocketClient(
     /** Total record count the camera advertises (u16), or null on timeout. */
     suspend fun requestFileCount(timeoutMs: Long = 2000): Int? = requestLock.withLock {
         exchange(CMD_FILE_COUNT, 1, timeoutMs) { writeBare(CMD_FILE_COUNT) }
-            .firstOrNull()?.let { if (it.payload.size >= 2) u16le(it.payload, 0) else null }
+            .firstOrNull()?.takeIf { it.type == 2 }
+            ?.let { if (it.payload.size >= 2) u16le(it.payload, 0) else null }
     }
 
     /**
@@ -373,6 +385,9 @@ class GpsocketClient(
                 val files = ArrayList<CameraFile>()
                 for (p in 0 until maxPages) {
                     val page = kotlinx.coroutines.withTimeout(timeoutMs) { ch.receive() }
+                    // A type-3 error frame echoes the cmd — surface it instead
+                    // of letting an empty parse truncate the list silently.
+                    if (page.type == 3) throw java.io.IOException("file list refused by camera")
                     val recs = parseFileListPage(page.payload)
                     if (recs.isEmpty()) break
                     files += recs
@@ -444,13 +459,17 @@ class GpsocketClient(
             // some states but the camera feffs 0x0503 on others.
             delay(800)
             writeArgs(CMD_FILE_SELECT, idArgs)
-            if (awaitCmd(ch, CMD_FILE_SELECT, timeoutMs) == null) {
-                return@withLock DownloadResult.Failed("no select ack")
+            val sel = awaitCmd(ch, CMD_FILE_SELECT, timeoutMs)
+            when {
+                sel == null -> return@withLock DownloadResult.Failed("no select ack")
+                sel.type == 3 -> return@withLock DownloadResult.Refused
             }
             delay(800)
             writeArgs(CMD_MEDIA_CLASS, byteArrayOf(file.kind.toByte()))
-            if (awaitCmd(ch, CMD_MEDIA_CLASS, timeoutMs) == null) {
-                return@withLock DownloadResult.Failed("no media-class ack")
+            val cls = awaitCmd(ch, CMD_MEDIA_CLASS, timeoutMs)
+            when {
+                cls == null -> return@withLock DownloadResult.Failed("no media-class ack")
+                cls.type == 3 -> return@withLock DownloadResult.Refused
             }
             delay(800)
             writeArgs(CMD_DOWNLOAD, idArgs)
@@ -467,8 +486,12 @@ class GpsocketClient(
                     break
                 }
                 if (f.payload.isEmpty()) {   // len=0 terminator
-                    result = if (received == 0L) DownloadResult.Refused
-                             else DownloadResult.Success(received)
+                    result = when {
+                        received == 0L -> DownloadResult.Refused
+                        received >= expected -> DownloadResult.Success(received)
+                        // Short stream — a mid-transfer abort lands here.
+                        else -> DownloadResult.Incomplete(received, expected)
+                    }
                     break
                 }
                 out.write(f.payload)
@@ -615,9 +638,12 @@ class GpsocketClient(
             }
             val frame = Frame(type, cmd, data.copyOfRange(idx + 14, idx + 14 + len))
             _frames.emit(frame)
-            if (cmd != CMD_KEEPALIVE)   // heartbeats would drown the log buffer
+            // Bulk frames (32 KiB download chunks, ~1 Hz heartbeats) are data,
+            // not signal — logging their full payload was ~2x the transfer's
+            // cost in hex-string building alone. Cap the rest at 48 bytes.
+            if (cmd != CMD_KEEPALIVE && cmd != CMD_DOWNLOAD)
                 DebugLogger.log("GPSOCKET", "RX cmd=0x%04x type=%d len=%d %s".format(cmd, type, len,
-                    frame.payload.joinToString("") { "%02x".format(it.toInt() and 0xFF) }))
+                    frame.payload.take(48).joinToString("") { "%02x".format(it.toInt() and 0xFF) }))
             pos = idx + 14 + len
         }
         buf.reset()
