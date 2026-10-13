@@ -5,7 +5,7 @@ import android.graphics.BitmapFactory
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
-import android.util.Log
+import com.juanm.easydashcam.core.DebugLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -74,7 +74,7 @@ class RtspMjpegClient(
             wr.write(req.toByteArray(Charsets.US_ASCII))
             wr.flush()
             val status = rd.readLine() ?: throw RtspException("no reply to $method")
-            Log.i("RTSP", "$method -> $status")
+            DebugLogger.log("RTSP", "$method -> $status")
             if (!status.contains(" 200")) throw RtspException("$method: $status")
             val headers = linkedMapOf<String, String>()
             while (true) {
@@ -92,6 +92,9 @@ class RtspMjpegClient(
         var setup: Map<String, String> = emptyMap()
         var rtpSock: DatagramSocket? = null
         var rtcpSock: DatagramSocket? = null
+        // Per-track (rtp, rtcp, server_port) — captured inside the SETUP loop
+        // because `setup` is overwritten on every iteration.
+        val trackSocks = ArrayList<Triple<DatagramSocket, DatagramSocket, Int>>()
         for (attempt in 1..3) {
             try {
                 cseq = 0   // Viidure restarts at 1 per session; the firmware may
@@ -102,7 +105,7 @@ class RtspMjpegClient(
                 request(rd!!, wr!!, "OPTIONS", base)
                 val desc = request(rd!!, wr!!, "DESCRIBE", base, "Accept: application/sdp\r\n")
                 val sdp = desc["#body"] ?: throw RtspException("no SDP in DESCRIBE")
-                Log.i("RTSP", "SDP: ${sdp.replace('\n', ' ').take(300)}")
+                DebugLogger.log("RTSP", "SDP: ${sdp.replace('\n', ' ').take(300)}")
                 val tracks = Regex("""a=control:(\S+)""").findAll(sdp)
                     .map { it.groupValues[1] }.toList()
                 if (tracks.isEmpty()) throw RtspException("SDP has no track")
@@ -115,7 +118,7 @@ class RtspMjpegClient(
                     ?.let { it.groupValues[1].toInt() to it.groupValues[2].toInt() }
                     ?: Regex("""m=audio\s+\d+\s+RTP/AVP\s+(\d+)""").find(sdp)
                         ?.let { it.groupValues[1].toInt() to 16000 }
-                Log.i("RTSP", "audio: ${audioPt?.let { "pt=${it.first} rate=${it.second}" } ?: "none in SDP"}")
+                DebugLogger.log("RTSP", "audio: ${audioPt?.let { "pt=${it.first} rate=${it.second}" } ?: "none in SDP"}")
 
                 // Viidure SETUPs every advertised track (video + audio) before
                 // PLAY — replicate it; the audio socket feeds an AudioTrack.
@@ -128,6 +131,9 @@ class RtspMjpegClient(
                         "Transport: RTP/AVP/UDP;unicast;client_port=${rs.localPort}-${cs.localPort}\r\n"
                     )
                     sessionId = setup["session"]?.substringBefore(';')
+                    trackSocks += Triple(rs, cs, setup["transport"]?.let {
+                        Regex("""server_port=(\d+)""").find(it)?.groupValues?.get(1)?.toInt()
+                    } ?: -1)
                     if (i == 0) { rtpSock = rs; rtcpSock = cs; rtp = rs; rtcp = cs }
                     else if (audioPt != null && audioRtp == null) { audioRtp = rs; extraSockets += cs }
                     else { extraSockets += rs; extraSockets += cs }
@@ -137,27 +143,29 @@ class RtspMjpegClient(
                 break
             } catch (e: Exception) {
                 lastError = e
-                Log.i("RTSP", "attempt $attempt failed: ${e.message}")
+                DebugLogger.log("RTSP", "attempt $attempt failed: ${e.message}")
                 runCatching { ctrl?.close() }; ctrl = null
                 stop()
                 if (attempt < 3) delay(2000)
             }
         }
         if (!handshakeOk) throw RtspException(lastError?.message ?: "handshake failed")
-        Log.i("RTSP", "PLAY ok, waiting for RTP on :${rtpSock!!.localPort}")
+        DebugLogger.log("RTSP", "PLAY ok, waiting for RTP on :${rtpSock!!.localPort}")
 
         val cam = InetAddress.getByName(host)
-        val serverRtp = setup["transport"]?.let {
-            Regex("""server_port=(\d+)""").find(it)?.groupValues?.get(1)?.toInt()
-        }
-        // Viidure pings the server ports right after SETUP — likely so the
-        // firmware learns our reachable socket. Cheap to replicate.
-        serverRtp?.let {
+        // Viidure pings every track's server_port from that track's own
+        // socket right after SETUP — the firmware learns the peer from the
+        // inbound packet rather than honoring client_port, so pinging the
+        // audio port from the video socket makes it send audio to the wrong
+        // local port (observed: zero packets on the audio socket).
+        trackSocks.forEach { (rs, cs, serverPort) ->
+            if (serverPort <= 0) return@forEach
             runCatching {
-                rtpSock!!.send(DatagramPacket(byteArrayOf(0, 0, 0, 0, 0, 0), 6, cam, it))
-                rtcpSock!!.send(DatagramPacket(byteArrayOf(0, 0, 0, 0, 0), 5, cam, it + 1))
+                rs.send(DatagramPacket(byteArrayOf(0, 0, 0, 0, 0, 0), 6, cam, serverPort))
+                cs.send(DatagramPacket(byteArrayOf(0, 0, 0, 0, 0), 5, cam, serverPort + 1))
             }
         }
+        DebugLogger.log("RTSP", "pings: ${trackSocks.joinToString { "${it.first.localPort}->:${it.third}" }}")
 
         // Keep the session alive; the camera accepts OPTIONS anytime.
         val keepalive = launch {
@@ -172,6 +180,7 @@ class RtspMjpegClient(
             var frame = ByteArray(MAX_FRAME)
             var expectedOffset = -1   // -1 = waiting for a fresh frame start
             var end = 0
+            var nonJpegSeen = 0
             val pkt = DatagramPacket(ByteArray(65535), 65535)
             while (isActive) {
                 rtpSock!!.receive(pkt)
@@ -181,7 +190,12 @@ class RtspMjpegClient(
                 val csrcCount = d[off].toInt() and 0x0F
                 val marker = d[off + 1].toInt() and 0x80 != 0
                 val pt = d[off + 1].toInt() and 0x7F
-                if (pt != PT_JPEG) continue
+                if (pt != PT_JPEG) {
+                    // Audio packets landing here mean the camera ignored
+                    // client_port — the ping fix above should prevent it.
+                    if (nonJpegSeen < 8) { nonJpegSeen++; DebugLogger.log("RTSP", "video sock: pt=$pt len=${pkt.length}") }
+                    continue
+                }
 
                 var p = off + 12 + csrcCount * 4
                 // RFC 2435 payload header: 1B type-specific | 3B frag offset | type | Q | w/8 | h/8
@@ -233,7 +247,7 @@ class RtspMjpegClient(
         val (pt, rate) = audioPt ?: return
         val buf = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_16BIT).coerceAtLeast(4 * 1024) * 2
-        if (buf <= 0) { Log.i("RTSP", "audio: getMinBufferSize=$buf"); return }
+        if (buf <= 0) { DebugLogger.log("RTSP", "audio: getMinBufferSize=$buf"); return }
         val track = AudioTrack.Builder()
             .setAudioAttributes(AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -246,9 +260,9 @@ class RtspMjpegClient(
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
         if (track.state != AudioTrack.STATE_INITIALIZED) {
-            Log.i("RTSP", "audio: AudioTrack init failed"); track.release(); return
+            DebugLogger.log("RTSP", "audio: AudioTrack init failed"); track.release(); return
         }
-        Log.i("RTSP", "audio playing on :${sock.localPort} (${rate} Hz)")
+        DebugLogger.log("RTSP", "audio playing on :${sock.localPort} (${rate} Hz)")
         val pkt = DatagramPacket(ByteArray(4096), 4096)
         val pcm = ByteArray(4096)
         var seen = 0
@@ -263,7 +277,7 @@ class RtspMjpegClient(
                 if (pkt.length < 12) continue
                 val csrc = d[off].toInt() and 0x0F
                 val packetPt = d[off + 1].toInt() and 0x7F
-                if (seen < 8) { seen++; Log.i("RTSP", "audio pkt pt=$packetPt len=${pkt.length}") }
+                if (seen < 8) { seen++; DebugLogger.log("RTSP", "audio pkt pt=$packetPt len=${pkt.length}") }
                 if (packetPt != pt) continue
                 val start = off + 12 + csrc * 4
                 val len = pkt.length - (start - off)
@@ -279,7 +293,7 @@ class RtspMjpegClient(
                 track.write(pcm, 0, len and 1.inv())
             }
         } catch (e: Exception) {
-            Log.i("RTSP", "audio stopped: ${e.message}")   // socket closed — stream over
+            DebugLogger.log("RTSP", "audio stopped: ${e.message}")   // socket closed — stream over
         } finally {
             runCatching { track.stop() }
             track.release()

@@ -1,6 +1,6 @@
 package com.juanm.easydashcam.core.net
 
-import android.util.Log
+import com.juanm.easydashcam.core.DebugLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -179,7 +179,7 @@ class GpsocketClient(
 
     private suspend fun writeBare(cmd: Int) {
         if (cmd != CMD_KEEPALIVE)   // heartbeats would drown the log buffer
-            Log.d("GPSOCKET", "TX cmd=0x%04x bare".format(cmd))
+            DebugLogger.log("GPSOCKET", "TX cmd=0x%04x bare".format(cmd))
         val frame = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN)
         frame.put(MAGIC)
         putU16(frame, TYPE_REQUEST)
@@ -188,7 +188,7 @@ class GpsocketClient(
     }
 
     private suspend fun writeArgs(cmd: Int, args: ByteArray) {
-        Log.d("GPSOCKET", "TX cmd=0x%04x args=%s".format(cmd,
+        DebugLogger.log("GPSOCKET", "TX cmd=0x%04x args=%s".format(cmd,
             args.joinToString("") { "%02x".format(it.toInt() and 0xFF) }))
         val frame = ByteBuffer.allocate(12 + args.size).order(ByteOrder.LITTLE_ENDIAN)
         frame.put(MAGIC)
@@ -243,7 +243,7 @@ class GpsocketClient(
 
     /** Live-probing API: send a bare command or command+inline-args. */
     suspend fun sendRaw(cmd: Int, args: ByteArray = byteArrayOf()) {
-        Log.d("GPSOCKET", "TX probe cmd=0x%04x args=%s".format(cmd, args.joinToString("") { "%02x".format(it.toInt() and 0xFF) }))
+        DebugLogger.log("GPSOCKET", "TX probe cmd=0x%04x args=%s".format(cmd, args.joinToString("") { "%02x".format(it.toInt() and 0xFF) }))
         if (args.isEmpty()) writeBare(cmd) else writeArgs(cmd, args)
     }
 
@@ -371,15 +371,19 @@ class GpsocketClient(
                 enterMode(MODE_FILE_LIST)
                 writePayload(CMD_FILE_LIST, byteArrayOf(0))
                 val files = ArrayList<CameraFile>()
-                repeat(maxPages) {
+                for (p in 0 until maxPages) {
                     val page = kotlinx.coroutines.withTimeout(timeoutMs) { ch.receive() }
                     val recs = parseFileListPage(page.payload)
-                    if (recs.isEmpty()) return@withLock files
+                    if (recs.isEmpty()) break
                     files += recs
-                    if (recs.size < FILE_PAGE_SIZE) return@withLock files
+                    if (recs.size < FILE_PAGE_SIZE) break
                     val last = recs.last().id
                     writeArgs(CMD_FILE_LIST, byteArrayOf(0, (last and 0xFF).toByte(), (last shr 8 and 0xFF).toByte()))
                 }
+                // Parsed records — kind letters are the only media/channel
+                // discriminator the protocol offers.
+                DebugLogger.log("FILES", "${files.size} records: " +
+                    files.joinToString(" | ") { it.toString() })
                 files
             } finally {
                 job.cancel()
@@ -598,7 +602,7 @@ class GpsocketClient(
             if (type == 3) {
                 val frame = Frame(type, cmd, data.copyOfRange(idx + 12, idx + 14))
                 _frames.emit(frame)
-                Log.d("GPSOCKET", "RX cmd=0x%04x type=3 arg=%s".format(cmd,
+                DebugLogger.log("GPSOCKET", "RX cmd=0x%04x type=3 arg=%s".format(cmd,
                     frame.payload.joinToString("") { "%02x".format(it.toInt() and 0xFF) }))
                 pos = idx + 14
                 continue
@@ -612,7 +616,7 @@ class GpsocketClient(
             val frame = Frame(type, cmd, data.copyOfRange(idx + 14, idx + 14 + len))
             _frames.emit(frame)
             if (cmd != CMD_KEEPALIVE)   // heartbeats would drown the log buffer
-                Log.d("GPSOCKET", "RX cmd=0x%04x type=%d len=%d %s".format(cmd, type, len,
+                DebugLogger.log("GPSOCKET", "RX cmd=0x%04x type=%d len=%d %s".format(cmd, type, len,
                     frame.payload.joinToString("") { "%02x".format(it.toInt() and 0xFF) }))
             pos = idx + 14 + len
         }
