@@ -72,6 +72,9 @@ class DownloadService : Service() {
     private lateinit var nm: NotificationManager
     // Written on main (onStartCommand) and reset by the IO worker.
     @Volatile private var worker = false
+    // Queue counters for "file N of M" in the notification.
+    @Volatile private var enqueued = 0
+    @Volatile private var finished = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -96,6 +99,7 @@ class DownloadService : Service() {
                     size = intent.getLongExtra(EXTRA_SIZE, 0)
                 )
                 queue.trySend(f)
+                enqueued++
                 ensureWorker()
             }
             ACTION_CANCEL -> {
@@ -131,6 +135,8 @@ class DownloadService : Service() {
                 wakeLock.release()
             }
             worker = false
+            enqueued = 0
+            finished = 0
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
@@ -200,7 +206,8 @@ class DownloadService : Service() {
                         lastNotifMs = now
                         nm.notify(NOTIF_ID, notification(
                             "$label — ${got / 1024}/${total / 1024} KiB" +
-                                (eta?.let { e -> ", ~$e s left" } ?: ""), f.uniqueId))
+                                (eta?.let { e -> ", ~$e s left" } ?: "") +
+                                " · file ${finished + 1}/$enqueued", f.uniqueId))
                     }
                 }
             }
@@ -238,6 +245,7 @@ class DownloadService : Service() {
     }
 
     private fun finishFile(id: Int, error: String? = null) {
+        finished++
         val prev = session.downloads.value[id]
         session.updateDownload(
             id, CameraSession.DownloadState(prev?.received ?: 0, prev?.total ?: 0, done = true, error = error)
