@@ -20,6 +20,9 @@ object DebugLogger {
         out = File(filesDir, "debug.log")
     }
 
+    /** The on-device log — for the Debug screen's share button. */
+    val logFile: File? get() = out
+
     @Synchronized
     fun log(tag: String, msg: String) {
         Log.i(tag, msg)
