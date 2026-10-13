@@ -114,16 +114,26 @@ class GpsocketClient(
     /** Serializes request/response exchanges — get-param replies are positional. */
     private val requestLock = Mutex()
 
+    /** Serializes state emissions — unordered emits from connect/disconnect/
+     *  the read-loop finally could otherwise leave a stale terminal state. */
+    private val stateMutex = Mutex()
+
+    /** Bumped per connection attempt and disconnect — a stale read-loop
+     *  finally checks it before emitting Disconnected or closing fields. */
+    private var socketGen = 0
+
     /** Last settings menu document received (init or on-demand request). */
     var lastMenuXml: String? = null
         private set
 
     suspend fun connect(host: String? = null) {
-        if (_state.replayCache.firstOrNull() is State.Connecting ||
-            _state.replayCache.firstOrNull() is State.Connected
-        ) return
+        stateMutex.withLock {
+            if (_state.replayCache.firstOrNull() is State.Connecting ||
+                _state.replayCache.firstOrNull() is State.Connected
+            ) return
+            _state.emit(State.Connecting)
+        }
         val target = host ?: this.host
-        _state.emit(State.Connecting)
         try {
             withContext(Dispatchers.IO) {
                 val s = Socket()
@@ -136,22 +146,31 @@ class GpsocketClient(
                 input = BufferedInputStream(s.getInputStream(), 65536)
                 output = BufferedOutputStream(s.getOutputStream(), 8192)
 
-                startReadLoop()
+                startReadLoop(++socketGen)
                 runInitSequence()
             }
             startHeartbeat()
-            _state.emit(State.Connected)
-        } catch (t: Throwable) {
+            stateMutex.withLock { _state.emit(State.Connected) }
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            // Without this the state stays Connecting forever and every later
+            // connect() early-returns.
+            socketGen++
             closeQuietly()
-            _state.emit(State.Error(t))
+            stateMutex.withLock { _state.emit(State.Disconnected) }
+            throw ce
+        } catch (t: Throwable) {
+            socketGen++
+            closeQuietly()
+            stateMutex.withLock { _state.emit(State.Error(t)) }
         }
     }
 
     fun disconnect() {
         heartbeatJob?.cancel()
         heartbeatJob = null
+        socketGen++               // a dying read loop must not clobber this emit
         closeQuietly()
-        scope.launch { _state.emit(State.Disconnected) }
+        scope.launch { stateMutex.withLock { _state.emit(State.Disconnected) } }
     }
 
     private fun closeQuietly() {
@@ -580,7 +599,7 @@ class GpsocketClient(
 
     // ---- Read loop ---------------------------------------------------------
 
-    private fun startReadLoop() {
+    private fun startReadLoop(gen: Int) {
         val ins = input ?: return
         scope.launch {
             val streamBuf = java.io.ByteArrayOutputStream()
@@ -597,8 +616,13 @@ class GpsocketClient(
             } finally {
                 heartbeatJob?.cancel()
                 heartbeatJob = null
-                _state.emit(State.Disconnected)
-                closeQuietly()
+                // Only the current socket's loop may report the disconnect —
+                // a stale loop dying after a reconnect would clobber the new
+                // Connected state.
+                if (gen == socketGen) {
+                    stateMutex.withLock { _state.emit(State.Disconnected) }
+                    closeQuietly()
+                }
             }
         }
     }
