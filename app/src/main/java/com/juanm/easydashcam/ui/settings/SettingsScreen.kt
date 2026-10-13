@@ -51,7 +51,7 @@ private fun SettingsList(vm: CameraViewModel) {
 
     PullToRefreshBox(
         isRefreshing = loading,
-        onRefresh = vm::loadSettings,
+        onRefresh = { vm.loadSettings(force = true) },
         modifier = Modifier.fillMaxSize()
     ) {
         val cats = categories

@@ -50,6 +50,12 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     private val _settingsLoading = MutableStateFlow(false)
     val settingsLoading: StateFlow<Boolean> = _settingsLoading
 
+    // Tab-entry refresh TTL — the socket is a single shared channel and a
+    // full fetch is ~50 round-trips, so re-fetching on every tab switch made
+    // navigation feel slow. Pull-to-refresh passes force=true.
+    private var filesFetchedAt = 0L
+    private var settingsLoadedAt = 0L
+
     /** One-shot user messages (errors, applied settings). */
     private val _notices = MutableStateFlow<List<String>>(emptyList())
     val notices: StateFlow<List<String>> = _notices
@@ -60,7 +66,17 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         viewModelScope.launch {
-            client.state.collect { _state.value = it }
+            client.state.collect { s ->
+                val wasConnected = _state.value is GpsocketClient.State.Connected
+                _state.value = s
+                // A fresh session may see a different card — drop caches.
+                if (s is GpsocketClient.State.Connected && !wasConnected) {
+                    filesFetchedAt = 0
+                    settingsLoadedAt = 0
+                    _files.value = null
+                    _settings.value = null
+                }
+            }
         }
         viewModelScope.launch {
             // ~1 Hz heartbeat/status frames flood the log — record them only
@@ -145,12 +161,17 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- Files --------------------------------------------------------------
 
-    fun refreshFiles() {
+    fun refreshFiles(force: Boolean = false) {
         if (_filesLoading.value) return
+        if (!force && _files.value != null &&
+            System.currentTimeMillis() - filesFetchedAt < 30_000) return
         viewModelScope.launch {
             _filesLoading.value = true
             runCatching { client.listFiles() }
-                .onSuccess { _files.value = it.sortedByDescending { f -> f.timestamp } }
+                .onSuccess {
+                    _files.value = it.sortedByDescending { f -> f.timestamp }
+                    filesFetchedAt = System.currentTimeMillis()
+                }
                 .onFailure { notice("file list failed: ${it.message}") }
             _filesLoading.value = false
         }
@@ -174,8 +195,10 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- Settings -----------------------------------------------------------
 
-    fun loadSettings() {
+    fun loadSettings(force: Boolean = false) {
         if (_settingsLoading.value) return
+        if (!force && _settings.value != null &&
+            System.currentTimeMillis() - settingsLoadedAt < 30_000) return
         viewModelScope.launch {
             _settingsLoading.value = true
             runCatching {
@@ -188,6 +211,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             }.onSuccess { (cats, values) ->
                 _settings.value = cats
                 _settingValues.value = values
+                settingsLoadedAt = System.currentTimeMillis()
             }.onFailure { notice("settings failed: ${it.message}") }
             _settingsLoading.value = false
         }

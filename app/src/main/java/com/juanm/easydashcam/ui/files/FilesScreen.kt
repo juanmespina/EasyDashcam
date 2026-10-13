@@ -279,7 +279,7 @@ private fun FilesList(vm: CameraViewModel) {
         }
     PullToRefreshBox(
         isRefreshing = loading,
-        onRefresh = { vm.refreshFiles(); vm.refreshLocalFiles() },
+        onRefresh = { vm.refreshFiles(force = true); vm.refreshLocalFiles() },
         modifier = Modifier.fillMaxSize().weight(1f)
     ) {
         when {
@@ -444,11 +444,10 @@ private object ClipMetaCache {
             runCatching {
                 context.contentResolver.openFileDescriptor(uri, "r")!!.use { pfd ->
                     AviMjpegPlayer(java.io.FileInputStream(pfd.fileDescriptor).channel).use { p ->
-                        p.index()
+                        p.probe()   // header only — no 'movi' walk
                         ClipMeta(
                             thumb = p.thumbnail(360),
-                            durationSec = if (p.frames.size > 1 && p.frameMs > 0)
-                                (p.durationSec + 0.5).toInt() else null
+                            durationSec = p.probeDurationSec?.let { (it + 0.5).toInt() }
                         )
                     }
                 }
