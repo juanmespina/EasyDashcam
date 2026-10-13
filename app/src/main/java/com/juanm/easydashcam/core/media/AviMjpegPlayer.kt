@@ -29,6 +29,24 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
     var frames: List<FrameRef> = emptyList()
         private set
 
+    /** Byte ranges of the audio stream's chunks ('xxwb'), in order. */
+    var audioRefs: List<FrameRef> = emptyList()
+        private set
+
+    /** Cumulative byte offset of each audio chunk in the PCM stream. */
+    private var audioStarts: LongArray = longArrayOf()
+
+    /** WAVEFORMATEX fields from the audio stream's 'strf'. */
+    var audioRate = 0
+        private set
+    var audioChannels = 0
+        private set
+    var audioBytesPerSec = 0L
+        private set
+    var audioByteLen = 0L
+        private set
+    val hasAudio: Boolean get() = audioRefs.isNotEmpty() && audioBytesPerSec > 0
+
     /** ms per frame, from 'strh'/'avih' (defaults to ~15 fps). */
     var frameMs = 66L
         private set
@@ -58,7 +76,9 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
         var pos = 12L
         var inMovi = false
         var moviEnd = 0L
+        var streamIsAudio = false
         val refs = ArrayList<FrameRef>()
+        val audio = ArrayList<FrameRef>()
 
         while (pos < riffSize) {
             ch.position(pos)
@@ -83,16 +103,36 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
                     pos = chunkEnd
                 }
                 id.contentEquals("strh".toByteArray()) -> {
-                    // dwScale/dwRate → frame interval (more reliable than avih)
-                    if (len >= 28) {
-                        val body = readBytes(28)!!
+                    // fccType@0 tells 'vids' from 'auds' — an audio stream's
+                    // dwScale/dwRate must NOT overwrite video timing.
+                    val body = readBytes(len.coerceAtMost(64).toInt())
+                    streamIsAudio = body != null &&
+                        body.copyOfRange(0, 4).contentEquals("auds".toByteArray())
+                    if (body != null && !streamIsAudio && len >= 28) {
                         val scale = u32le(body, 20); val rate = u32le(body, 24)
                         if (rate > 0) usecPerFrame = scale * 1_000_000 / rate
                     }
                     pos = chunkEnd
                 }
+                // WAVEFORMATEX: tag@0 | channels@2 | rate@4 | avgBps@8
+                id.contentEquals("strf".toByteArray()) -> {
+                    val body = if (len >= 10) readBytes(len.coerceAtMost(16).toInt()) else null
+                    if (streamIsAudio && body != null) {
+                        val tag = (body[0].toInt() and 0xFF) or (body[1].toInt() and 0xFF shl 8)
+                        if (tag == 1) {   // PCM — anything else can't go to AudioTrack
+                            audioChannels = body[2].toInt() and 0xFF
+                            audioRate = u32le(body, 4).toInt()
+                            audioBytesPerSec = u32le(body, 8)
+                        }
+                    }
+                    pos = chunkEnd
+                }
                 inMovi && isVideoChunk(id) -> {
                     refs += FrameRef(pos, len.toInt())
+                    pos = chunkEnd
+                }
+                inMovi && isAudioChunk(id) -> {
+                    audio += FrameRef(pos, len.toInt())
                     pos = chunkEnd
                 }
                 else -> pos = chunkEnd
@@ -102,6 +142,11 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
         if (refs.isEmpty()) throw AviException("no video frames in file")
         frameMs = (usecPerFrame / 1000).coerceIn(1, 500)
         frames = refs
+        audioRefs = audio
+        audioStarts = LongArray(audio.size)
+        var acc = 0L
+        audio.forEachIndexed { i, r -> audioStarts[i] = acc; acc += r.length }
+        audioByteLen = acc
     }
 
     /** Decode frame [i]; null when the JPEG is corrupt. Safe to call from IO. */
@@ -112,10 +157,56 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
         BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)
     }
 
+    /** First frame downsampled to ~[maxDim] px — for grid thumbnails. */
+    suspend fun thumbnail(maxDim: Int): Bitmap? = withContext(Dispatchers.IO) {
+        val ref = frames.firstOrNull() ?: return@withContext null
+        ch.position(ref.offset)
+        val jpeg = readBytes(ref.length) ?: return@withContext null
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, bounds)
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxDim) sample *= 2
+        BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size,
+            BitmapFactory.Options().apply { inSampleSize = sample })
+    }
+
+    /** Byte offset in the concatenated PCM stream for time [ms] — PCM is
+     *  constant-rate, so seeking is linear. */
+    fun audioPosForMs(ms: Long): Long =
+        (ms * audioBytesPerSec / 1000).coerceIn(0, audioByteLen)
+
+    /**
+     * Read up to [len] bytes of PCM at stream offset [pos] into [out].
+     * Returns the byte count, or -1 at end of audio. Chunk boundaries are
+     * meaningless for PCM, but the chunks aren't contiguous in the file so a
+     * read never crosses one — the caller loops.
+     */
+    suspend fun audioRead(pos: Long, out: ByteArray, off: Int = 0, len: Int = out.size): Int =
+        withContext(Dispatchers.IO) {
+            if (!hasAudio || pos < 0 || pos >= audioByteLen) return@withContext -1
+            var lo = 0
+            var hi = audioStarts.size - 1
+            while (lo < hi) {
+                val mid = (lo + hi + 1) / 2
+                if (audioStarts[mid] <= pos) lo = mid else hi = mid - 1
+            }
+            val ref = audioRefs[lo]
+            val skip = (pos - audioStarts[lo]).toInt()
+            if (skip >= ref.length) return@withContext -1
+            val n = minOf(len, ref.length - skip)
+            ch.position(ref.offset + skip)
+            val data = readBytes(n) ?: return@withContext -1
+            System.arraycopy(data, 0, out, off, n)
+            n
+        }
+
     override fun close() = runCatching { ch.close() }.let { }
 
     private fun isVideoChunk(id: ByteArray) =
         id[2] == 'd'.code.toByte() && (id[3] == 'c'.code.toByte() || id[3] == 'b'.code.toByte())
+
+    private fun isAudioChunk(id: ByteArray) =
+        id[2] == 'w'.code.toByte() && id[3] == 'b'.code.toByte()
 
     private fun readBytes(n: Int): ByteArray? {
         val buf = ByteBuffer.allocate(n)

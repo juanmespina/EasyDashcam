@@ -17,6 +17,9 @@ class AviMjpegPlayerTest {
     private fun le32(v: Int): ByteArray =
         ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(v).array()
 
+    private fun le16(v: Int): ByteArray =
+        ByteBuffer.allocate(2).order(ByteOrder.LITTLE_ENDIAN).putShort(v.toShort()).array()
+
     private fun fourcc(s: String) = s.toByteArray(Charsets.US_ASCII)
 
     private fun ByteArrayOutputStream.chunk(id: String, body: ByteArray) {
@@ -40,6 +43,9 @@ class AviMjpegPlayerTest {
         strhScale: Int = 0,
         strhRate: Int = 0,
         frames: List<ByteArray>,
+        audioChunks: List<ByteArray> = emptyList(),
+        audioRate: Int = 16000,
+        audioStrhRate: Int = 0,
     ): ByteArray {
         val out = ByteArrayOutputStream()
 
@@ -51,11 +57,25 @@ class AviMjpegPlayerTest {
         val strl = ByteArrayOutputStream()
         strl.chunk("strh", strh)
         strl.chunk("strf", ByteArray(40))
-        out.write(listChunk("hdrl", listChunk("strl", strl.toByteArray())))
+        val hdrl = ByteArrayOutputStream()
+        hdrl.write(listChunk("strl", strl.toByteArray()))
+        if (audioChunks.isNotEmpty()) {
+            val astrh = "auds".toByteArray() + ByteArray(52)
+            le32(1).copyInto(astrh, 20)
+            le32(audioStrhRate).copyInto(astrh, 24)
+            // WAVEFORMATEX: PCM, mono, rate, avgBps = rate*2, align 2, 16-bit
+            val wave = le16(1) + le16(1) + le32(audioRate) + le32(audioRate * 2) +
+                le16(2) + le16(16)
+            val astrl = ByteArrayOutputStream()
+            astrl.chunk("strh", astrh)
+            astrl.chunk("strf", wave)
+            hdrl.write(listChunk("strl", astrl.toByteArray()))
+        }
+        out.write(listChunk("hdrl", hdrl.toByteArray()))
 
         val movi = ByteArrayOutputStream()
         frames.forEach { movi.chunk("00dc", it) }
-        movi.chunk("01wb", ByteArray(16))   // audio chunks must be skipped
+        audioChunks.forEach { movi.chunk("01wb", it) }
         out.write(listChunk("movi", movi.toByteArray()))
 
         out.chunk("idx1", ByteArray(32))
@@ -140,6 +160,68 @@ class AviMjpegPlayerTest {
         val p = playerFor(buildAvi(frames = listOf(jpeg(1))))
         p.index()
         assertNull(p.frameAt(5))
+        p.close()
+    }
+
+    @Test
+    fun `audio stream is indexed with format`() = runBlocking {
+        val pcm = ByteArray(4) { 7 } + ByteArray(4) { 9 }
+        val p = playerFor(buildAvi(frames = listOf(jpeg(1)),
+            audioChunks = listOf(pcm.copyOfRange(0, 4), pcm.copyOfRange(4, 8))))
+        p.index()
+        assertEquals(2, p.audioRefs.size)
+        assertEquals(16000, p.audioRate)
+        assertEquals(1, p.audioChannels)
+        assertEquals(32000L, p.audioBytesPerSec)
+        assertEquals(8L, p.audioByteLen)
+        assert(p.hasAudio)
+        p.close()
+    }
+
+    @Test
+    fun `audio strh does not clobber video timing`() = runBlocking {
+        // auds strh rate 32000 would give ~31µs/frame if it overwrote the
+        // video stream's 1/30 timing.
+        val p = playerFor(buildAvi(strhScale = 1, strhRate = 30,
+            frames = listOf(jpeg(1)),
+            audioChunks = listOf(ByteArray(8)), audioStrhRate = 32000))
+        p.index()
+        assertEquals(33L, p.frameMs)
+        p.close()
+    }
+
+    @Test
+    fun `audioRead serves pcm across chunk boundaries`() = runBlocking {
+        val p = playerFor(buildAvi(frames = listOf(jpeg(1)),
+            audioChunks = listOf(byteArrayOf(1, 2, 3, 4), byteArrayOf(5, 6, 7, 8))))
+        p.index()
+        val buf = ByteArray(3)
+        assertEquals(3, p.audioRead(0, buf))
+        assert(byteArrayOf(1, 2, 3).contentEquals(buf))
+        assertEquals(1, p.audioRead(3, buf))   // stops at the chunk boundary…
+        assertEquals(4, buf[0].toInt())
+        assertEquals(3, p.audioRead(4, buf))   // …caller's next read crosses it
+        assert(byteArrayOf(5, 6, 7).contentEquals(buf))
+        assertEquals(-1, p.audioRead(8, buf))
+        p.close()
+    }
+
+    @Test
+    fun `audioPosForMs is linear for pcm`() = runBlocking {
+        val p = playerFor(buildAvi(frames = listOf(jpeg(1)),
+            audioChunks = listOf(ByteArray(64))))
+        p.index()
+        assertEquals(32L, p.audioPosForMs(1))   // 1 ms = 32 B @ 32 000 B/s
+        // A position past the audio end clamps to the stream length.
+        assertEquals(p.audioByteLen, p.audioPosForMs(999_999))
+        p.close()
+    }
+
+    @Test
+    fun `no audio stream means no audio`() = runBlocking {
+        val p = playerFor(buildAvi(frames = listOf(jpeg(1))))
+        p.index()
+        assert(!p.hasAudio)
         p.close()
     }
 }
