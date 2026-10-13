@@ -21,6 +21,7 @@ import kotlinx.coroutines.launch
  */
 class CameraSession(context: Context) {
 
+    private val appContext = context.applicationContext
     val client = GpsocketClient()
     private val binder = CameraNetworkBinder(context.applicationContext)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -52,6 +53,27 @@ class CameraSession(context: Context) {
     fun clearDownloads() {
         _downloads.value = emptyMap()
     }
+
+    // ---- Auto-download -----------------------------------------------------
+    // When enabled, refreshFiles() enqueues only records newer than the
+    // watermark — clips that existed before enabling are left alone.
+
+    private val prefs = appContext.getSharedPreferences("easydashcam", Context.MODE_PRIVATE)
+
+    private val _autoDownload = MutableStateFlow(prefs.getBoolean("auto_download", false))
+    val autoDownload: StateFlow<Boolean> = _autoDownload
+
+    fun setAutoDownload(on: Boolean) {
+        if (on && !prefs.contains("auto_ts"))
+            autoSyncWatermark = java.time.LocalDateTime.now()
+        prefs.edit().putBoolean("auto_download", on).apply()
+        _autoDownload.value = on
+    }
+
+    var autoSyncWatermark: java.time.LocalDateTime?
+        get() = prefs.getString("auto_ts", null)
+            ?.let { runCatching { java.time.LocalDateTime.parse(it) }.getOrNull() }
+        set(v) { prefs.edit().putString("auto_ts", v?.toString()).apply() }
 
     // Auto-reconnect: once a connection succeeded, a Wi-Fi network coming back
     // (camera rebooted, hotspot re-joined) re-arms the socket — unless the user

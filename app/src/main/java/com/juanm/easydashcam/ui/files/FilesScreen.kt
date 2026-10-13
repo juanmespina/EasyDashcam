@@ -47,6 +47,8 @@ import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.SyncDisabled
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Card
@@ -127,6 +129,7 @@ private fun FilesList(vm: CameraViewModel) {
     var dayFilter by remember { mutableStateOf<LocalDate?>(null) }
     var filterMenu by remember { mutableStateOf(false) }
     var pickDay by remember { mutableStateOf(false) }
+    val autoDl by vm.autoDownload.collectAsStateWithLifecycle()
 
     var pendingNotif by remember { mutableStateOf<GpsocketClient.CameraFile?>(null) }
     var pendingBatch by remember { mutableStateOf(false) }
@@ -274,6 +277,16 @@ private fun FilesList(vm: CameraViewModel) {
                         )
                     }
                 }
+            }
+            // Auto-download: enqueues clips recorded after it was enabled.
+            IconButton(onClick = vm::toggleAutoDownload) {
+                Icon(
+                    if (autoDl) Icons.Default.Sync else Icons.Default.SyncDisabled,
+                    contentDescription = if (autoDl)
+                        "Auto-download on — tap to disable" else "Auto-download new clips",
+                    tint = if (autoDl) MaterialTheme.colorScheme.primary
+                           else androidx.compose.material3.LocalContentColor.current
+                )
             }
             IconButton(onClick = { viewMode = viewMode.next() }) {
                 Icon(
@@ -470,9 +483,15 @@ private object ClipMetaCache {
 }
 
 private fun shareFile(context: android.content.Context, uri: Uri, isImage: Boolean) {
+    // Pre-29 downloads are file:// URIs — raw file:// crashes the target on
+    // API 24+, so route them through the FileProvider.
+    val shareUri = if (uri.scheme == "file") {
+        androidx.core.content.FileProvider.getUriForFile(
+            context, "${context.packageName}.fileprovider", java.io.File(uri.path!!))
+    } else uri
     val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
         type = if (isImage) "image/jpeg" else "video/*"
-        putExtra(android.content.Intent.EXTRA_STREAM, uri)
+        putExtra(android.content.Intent.EXTRA_STREAM, shareUri)
         addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     context.startActivity(android.content.Intent.createChooser(send, "Share clip"))

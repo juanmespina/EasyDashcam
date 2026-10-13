@@ -61,14 +61,18 @@ import java.util.Locale
 fun LiveScreen(vm: CameraViewModel) {
     val state by vm.state.collectAsStateWithLifecycle()
     val cameraHost by vm.cameraHost.collectAsStateWithLifecycle()
+    // Modes are global on the camera: a download steals the preview channel.
+    val transferActive by vm.transferActive.collectAsStateWithLifecycle()
     ConnectionGate(state = state, onConnect = vm::connect) {
-        LivePlayer(cameraHost, vm::enterPreviewMode, vm::exitPreviewMode, vm::postNotice)
+        LivePlayer(cameraHost, transferActive,
+            vm::enterPreviewMode, vm::exitPreviewMode, vm::postNotice)
     }
 }
 
 @Composable
 private fun LivePlayer(
     cameraHost: String,
+    transferActive: Boolean,
     onArmed: suspend () -> Unit,
     onDisarmed: () -> Unit,
     onNotice: (String) -> Unit
@@ -186,6 +190,18 @@ private fun LivePlayer(
                     )
                 }
             }
+        }
+        if (transferActive) {
+            Text(
+                "Download in progress — preview may pause",
+                color = Color.White,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 8.dp)
+                    .background(Color.Black.copy(alpha = 0.6f))
+                    .padding(horizontal = 12.dp, vertical = 4.dp)
+            )
         }
     }
 }

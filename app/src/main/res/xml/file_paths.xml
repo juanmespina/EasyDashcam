@@ -2,4 +2,6 @@
 <paths>
     <!-- The debug log is copied into cache before sharing. -->
     <cache-path name="share" path="share/" />
+    <!-- Pre-29 downloads live in app-private external storage. -->
+    <external-files-path name="downloads" path="." />
 </paths>

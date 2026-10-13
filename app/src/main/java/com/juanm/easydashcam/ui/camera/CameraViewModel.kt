@@ -15,6 +15,9 @@ import com.juanm.easydashcam.core.settings.MenuParser
 import com.juanm.easydashcam.core.settings.SettingCategory
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -29,8 +32,19 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     /** Download progress per record id, fed by DownloadService via the session. */
     val downloads = session.downloads
 
+    /** True while any transfer is in flight — downloads emits per chunk, so
+     *  this is distinctUntilChanged to avoid recomposition churn. */
+    val transferActive: StateFlow<Boolean> = session.downloads
+        .map { m -> m.values.any { !it.done } }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, false)
+
     /** Address of the connected camera — RTSP targets the same host. */
     val cameraHost = session.cameraHost
+
+    /** Auto-download-new-clips preference (persisted). */
+    val autoDownload = session.autoDownload
+    fun toggleAutoDownload() = session.setAutoDownload(!session.autoDownload.value)
 
     /** uniqueId → MediaStore uri for files already on the phone. */
     private val _localFiles = MutableStateFlow<Map<Int, Uri>>(emptyMap())
@@ -116,26 +130,38 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Re-scan Movies/EasyDashcam for clips we already downloaded. */
     fun refreshLocalFiles() {
-        if (Build.VERSION.SDK_INT < 29) return   // pre-29 path used app-private storage
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            val collection = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            // New names are <stamp>_<id4><kind>.<ext>; legacy cam_<id4><kind>.
+            // The suffix anchored at the end matches both.
+            val nameRx = Regex("""([0-9a-fA-F]{4})([A-Z])\.(avi|jpg)$""")
             val out = mutableMapOf<Int, Uri>()
-            getApplication<Application>().contentResolver.query(
-                collection,
-                arrayOf(MediaStore.Video.Media._ID, MediaStore.Video.Media.DISPLAY_NAME),
-                "(${MediaStore.Video.Media.RELATIVE_PATH} LIKE 'Movies/EasyDashcam/%'" +
-                    " OR ${MediaStore.Video.Media.RELATIVE_PATH} LIKE 'Pictures/EasyDashcam/%')",
-                null, null
-            )?.use { c ->
-                val idCol = c.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
-                val nameCol = c.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
-                // New names are <stamp>_<id4><kind>.<ext>; legacy cam_<id4><kind>.
-                // The suffix anchored at the end matches both.
-                val nameRx = Regex("""([0-9a-fA-F]{4})([A-Z])\.(avi|jpg)$""")
-                while (c.moveToNext()) {
-                    val m = nameRx.find(c.getString(nameCol)) ?: continue
-                    val uid = (m.groupValues[1].toInt(16) shl 8) or m.groupValues[2][0].code
-                    out[uid] = ContentUris.withAppendedId(collection, c.getLong(idCol))
+            if (Build.VERSION.SDK_INT < 29) {
+                // Pre-29 downloads live in app-private storage — MediaStore
+                // can't see them, so scan the directory directly.
+                val dir = getApplication<Application>()
+                    .getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES)
+                dir?.listFiles()?.forEach { f ->
+                    val m = nameRx.find(f.name) ?: return@forEach
+                    out[(m.groupValues[1].toInt(16) shl 8) or m.groupValues[2][0].code] =
+                        Uri.fromFile(f)
+                }
+            } else {
+                val collection = MediaStore.Video.Media
+                    .getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                getApplication<Application>().contentResolver.query(
+                    collection,
+                    arrayOf(MediaStore.Video.Media._ID, MediaStore.Video.Media.DISPLAY_NAME),
+                    "(${MediaStore.Video.Media.RELATIVE_PATH} LIKE 'Movies/EasyDashcam/%'" +
+                        " OR ${MediaStore.Video.Media.RELATIVE_PATH} LIKE 'Pictures/EasyDashcam/%')",
+                    null, null
+                )?.use { c ->
+                    val idCol = c.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
+                    val nameCol = c.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
+                    while (c.moveToNext()) {
+                        val m = nameRx.find(c.getString(nameCol)) ?: continue
+                        val uid = (m.groupValues[1].toInt(16) shl 8) or m.groupValues[2][0].code
+                        out[uid] = ContentUris.withAppendedId(collection, c.getLong(idCol))
+                    }
                 }
             }
             _localFiles.value = out
@@ -182,6 +208,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 .onSuccess {
                     _files.value = it.sortedByDescending { f -> f.timestamp }
                     filesFetchedAt = System.currentTimeMillis()
+                    if (session.autoDownload.value) autoEnqueueNew(it)
                 }
                 .onFailure { notice("file list failed: ${it.message}") }
             _filesLoading.value = false
@@ -202,6 +229,22 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     fun download(f: GpsocketClient.CameraFile) {
         ContextCompat.startForegroundService(
             getApplication(), DownloadService.downloadIntent(getApplication(), f))
+    }
+
+    /** Enqueue records newer than the sync watermark — clips that existed
+     *  before auto-download was enabled are intentionally left alone. */
+    private fun autoEnqueueNew(files: List<GpsocketClient.CameraFile>) {
+        val wm = session.autoSyncWatermark ?: return
+        val local = _localFiles.value
+        val dl = session.downloads.value
+        val fresh = files.filter {
+            it.kindChar != 'L' && it.timestamp != null && it.timestamp.isAfter(wm) &&
+                local[it.uniqueId] == null && dl[it.uniqueId] == null
+        }.sortedBy { it.timestamp }.take(10)
+        if (fresh.isEmpty()) return
+        fresh.forEach(::download)
+        session.autoSyncWatermark = fresh.last().timestamp
+        notice("Auto-downloading ${fresh.size} new clip(s)")
     }
 
     // ---- Settings -----------------------------------------------------------
