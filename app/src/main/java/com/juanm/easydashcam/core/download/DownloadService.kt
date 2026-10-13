@@ -5,15 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
-import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
-import android.os.Build
-import android.os.Environment
 import android.os.IBinder
 import android.os.PowerManager
-import android.provider.MediaStore
 import com.juanm.easydashcam.core.DebugLogger
 import androidx.core.app.NotificationCompat
 import com.juanm.easydashcam.EasyDashcamApp
@@ -26,7 +21,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
-import java.io.File
 import java.io.OutputStream
 
 /**
@@ -143,33 +137,10 @@ class DownloadService : Service() {
     }
 
     private suspend fun downloadOne(f: GpsocketClient.CameraFile) {
-        // Timestamped names sort naturally and make a clip findable in the
-        // gallery: 20251011_143022_e507A.avi — the id+kind suffix stays so
-        // refreshLocalFiles can map the file back to its camera record.
-        val stamp = f.timestamp
-            ?.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
-        val label = (stamp?.let { "${it}_" } ?: "cam_") +
-            "%04x%c.avi".format(f.id, f.kindChar)
-        val out: OutputStream?
-        val uri: Uri?
-        val fallback: File?
-        if (Build.VERSION.SDK_INT >= 29) {
-            val values = ContentValues().apply {
-                put(MediaStore.Video.Media.DISPLAY_NAME, label)
-                put(MediaStore.Video.Media.MIME_TYPE, "video/x-msvideo")
-                put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/EasyDashcam")
-                put(MediaStore.Video.Media.IS_PENDING, 1)
-            }
-            uri = contentResolver.insert(
-                MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values)
-            out = uri?.let { contentResolver.openOutputStream(it) }
-            fallback = null
-        } else {
-            uri = null
-            fallback = File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), label)
-            out = fallback.outputStream()
-        }
-        if (out == null) { finishFile(f.uniqueId, error = "no destination"); return }
+        val dest = ClipStore.open(this, f)
+        if (dest == null) { finishFile(f.uniqueId, error = "no destination"); return }
+        val label = dest.label
+        val out = dest.out
 
         // Photo records come back as raw JPEG, not AVI — capture the magic
         // bytes while streaming so the MediaStore entry can be fixed afterwards.
@@ -212,35 +183,24 @@ class DownloadService : Service() {
                 }
             }
         } catch (_: CancellationException) {
-            failFile(uri, fallback, f.uniqueId, "cancelled")
+            failFile(dest, f.uniqueId, "cancelled")
             return
         }
         when (result) {
             is GpsocketClient.DownloadResult.Success -> {
-                if (Build.VERSION.SDK_INT >= 29 && uri != null) {
-                    val magic = head.toByteArray()
-                    val isJpeg = magic.size >= 2 &&
-                        magic[0] == 0xFF.toByte() && magic[1] == 0xD8.toByte()
-                    contentResolver.update(uri, ContentValues().apply {
-                        put(MediaStore.Video.Media.IS_PENDING, 0)
-                        if (isJpeg) {
-                            put(MediaStore.Video.Media.DISPLAY_NAME,
-                                label.removeSuffix(".avi") + ".jpg")
-                            put(MediaStore.Video.Media.MIME_TYPE, "image/jpeg")
-                            put(MediaStore.Video.Media.RELATIVE_PATH,
-                                Environment.DIRECTORY_PICTURES + "/EasyDashcam")
-                        }
-                    }, null, null)
-                }
+                val magic = head.toByteArray()
+                val isJpeg = magic.size >= 2 &&
+                    magic[0] == 0xFF.toByte() && magic[1] == 0xD8.toByte()
+                ClipStore.commit(this, dest, isJpeg)
                 finishFile(f.uniqueId)
             }
             is GpsocketClient.DownloadResult.Refused ->
                 // feff most often means the camera is still writing this record
-                failFile(uri, fallback, f.uniqueId, "camera refused (still recording?)")
+                failFile(dest, f.uniqueId, "camera refused (still recording?)")
             is GpsocketClient.DownloadResult.Incomplete ->
-                failFile(uri, fallback, f.uniqueId, "stalled at ${result.bytes}/${result.expected} B")
+                failFile(dest, f.uniqueId, "stalled at ${result.bytes}/${result.expected} B")
             is GpsocketClient.DownloadResult.Failed ->
-                failFile(uri, fallback, f.uniqueId, result.reason)
+                failFile(dest, f.uniqueId, result.reason)
         }
     }
 
@@ -262,9 +222,8 @@ class DownloadService : Service() {
         DebugLogger.log("GPSOCKET", "download %04x -> %s".format(id ushr 8, error ?: "done"))
     }
 
-    private fun failFile(uri: Uri?, fallback: File?, id: Int, error: String) {
-        runCatching { uri?.let { contentResolver.delete(it, null, null) } }
-        fallback?.delete()
+    private fun failFile(dest: ClipStore.Dest, id: Int, error: String) {
+        ClipStore.fail(this, dest)
         finishFile(id, error)
     }
 
