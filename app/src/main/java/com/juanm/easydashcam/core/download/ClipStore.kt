@@ -27,16 +27,20 @@ object ClipStore {
 
     /** Timestamped names sort naturally and the id+kind suffix lets
      *  refreshLocalFiles map the file back to its camera record:
-     *  20251011_143022_e507A.avi */
-    fun labelFor(f: GpsocketClient.CameraFile): String {
+     *  20251011_143022_e507A.avi — partial stream saves keep the suffix so
+     *  the mapping still works but stay distinguishable:
+     *  20251011_143022_partial_e507A.avi */
+    fun labelFor(f: GpsocketClient.CameraFile, partial: Boolean = false): String {
         val stamp = f.timestamp
             ?.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
         return (stamp?.let { "${it}_" } ?: "cam_") +
+            (if (partial) "partial_" else "") +
             "%04x%c.avi".format(f.id, f.kindChar)
     }
 
-    fun open(context: Context, f: GpsocketClient.CameraFile): Dest? {
-        val label = labelFor(f)
+    fun open(context: Context, f: GpsocketClient.CameraFile,
+             partial: Boolean = false): Dest? {
+        val label = labelFor(f, partial)
         if (Build.VERSION.SDK_INT >= 29) {
             val values = ContentValues().apply {
                 put(MediaStore.Video.Media.DISPLAY_NAME, label)

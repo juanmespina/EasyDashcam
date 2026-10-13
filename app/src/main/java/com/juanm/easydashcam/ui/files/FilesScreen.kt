@@ -123,6 +123,7 @@ private fun FilesList(vm: CameraViewModel) {
     val loading by vm.filesLoading.collectAsStateWithLifecycle()
     val downloads by vm.downloads.collectAsStateWithLifecycle()
     val localFiles by vm.localFiles.collectAsStateWithLifecycle()
+    val partialLocal by vm.partialLocal.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var playing by remember { mutableStateOf<Pair<Uri, Boolean>?>(null) }
     var streaming by remember { mutableStateOf<GpsocketClient.CameraFile?>(null) }
@@ -346,6 +347,7 @@ private fun FilesList(vm: CameraViewModel) {
                                     download = downloads[f.uniqueId],
                                     durationSec = durations[f.uniqueId],
                                     localUri = uri,
+                                    partial = f.uniqueId in partialLocal,
                                     onDownload = { startDownload(f) },
                                     onPlay = uri?.let { { playing = it to (f.kindChar == 'J') } },
                                     onStream = if (uri == null) { { streaming = f } } else null,
@@ -373,7 +375,8 @@ private fun FilesList(vm: CameraViewModel) {
                                     if (viewMode == ViewMode.TIMELINE) {
                                         TimelineRow(f, i == 0, i == sorted.lastIndex,
                                             downloads[f.uniqueId], durations[f.uniqueId],
-                                            uri, { startDownload(f) },
+                                            uri, f.uniqueId in partialLocal,
+                                            { startDownload(f) },
                                             uri?.let { { playing = it to (f.kindChar == 'J') } },
                                             if (uri == null) { { streaming = f } } else null,
                                             uri?.let { { actionsFor = it to f } })
@@ -383,6 +386,7 @@ private fun FilesList(vm: CameraViewModel) {
                                             download = downloads[f.uniqueId],
                                             durationSec = durations[f.uniqueId],
                                             localUri = uri,
+                                            partial = f.uniqueId in partialLocal,
                                             onDownload = { startDownload(f) },
                                             onPlay = uri?.let { { playing = it to (f.kindChar == 'J') } },
                                             onStream = if (uri == null) { { streaming = f } } else null,
@@ -554,7 +558,8 @@ private fun fileDetail(
     file: GpsocketClient.CameraFile,
     durationSec: Int?,
     download: CameraSession.DownloadState?,
-    local: Boolean
+    local: Boolean,
+    partial: Boolean = false
 ): String {
     // The camera feff-refuses records it is still writing — flag rows that
     // fresh so a refusal doesn't look like a broken download.
@@ -566,7 +571,7 @@ private fun fileDetail(
         durationSec?.let { append(" · ~%dm %02ds".format(it / 60, it % 60)) }
         download?.takeIf { !it.done }?.etaSec?.let { append(" · ~%ds left".format(it)) }
         if (stillRecording) append(" · still recording?")
-        if (local) append(" · downloaded")
+        if (local) append(if (partial) " · partial" else " · downloaded")
     }
 }
 
@@ -580,6 +585,7 @@ private fun TimelineRow(
     download: CameraSession.DownloadState?,
     durationSec: Int?,
     localUri: Uri?,
+    partial: Boolean = false,
     onDownload: () -> Unit,
     onPlay: (() -> Unit)?,
     onStream: (() -> Unit)?,
@@ -603,7 +609,8 @@ private fun TimelineRow(
                 ?: "id 0x%04x".format(file.id))
         },
         supportingContent = {
-            Text(fileDetail(file, meta?.durationSec ?: durationSec, download, localUri != null))
+            Text(fileDetail(file, meta?.durationSec ?: durationSec, download,
+                localUri != null, partial))
         },
         trailingContent = {
             DownloadTrailing(download, localUri != null, onDownload, onPlay, onStream)
@@ -679,6 +686,7 @@ private fun FileRow(
     download: CameraSession.DownloadState?,
     durationSec: Int?,
     localUri: Uri?,
+    partial: Boolean = false,
     onDownload: () -> Unit,
     onPlay: (() -> Unit)?,
     onStream: (() -> Unit)?,
@@ -697,7 +705,8 @@ private fun FileRow(
             Text(file.timestamp?.format(DateTimeFormatter.ofPattern("HH:mm:ss")) ?: "id 0x%04x".format(file.id))
         },
         supportingContent = {
-            Text(fileDetail(file, meta?.durationSec ?: durationSec, download, localUri != null))
+            Text(fileDetail(file, meta?.durationSec ?: durationSec, download,
+                localUri != null, partial))
         },
         trailingContent = {
             DownloadTrailing(download, localUri != null, onDownload, onPlay, onStream)
@@ -715,6 +724,7 @@ private fun FileTile(
     download: CameraSession.DownloadState?,
     durationSec: Int?,
     localUri: Uri?,
+    partial: Boolean = false,
     onDownload: () -> Unit,
     onPlay: (() -> Unit)?,
     onStream: (() -> Unit)?,
@@ -748,7 +758,8 @@ private fun FileTile(
                     )
                 }
                 Text(
-                    fileDetail(file, meta?.durationSec ?: durationSec, download, localUri != null),
+                    fileDetail(file, meta?.durationSec ?: durationSec, download,
+                localUri != null, partial),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1036,7 +1047,9 @@ private fun PlayerDialog(
                 // chunk, so the user can keep just the part they watched.
                 if (remote != null && error == null && (streamDone || indexed)) {
                     IconButton(onClick = {
-                        scope.launch { saved = vm.saveStreamed(remote, tmpFile!!) }
+                        scope.launch {
+                            saved = vm.saveStreamed(remote, tmpFile!!, partial = !streamDone)
+                        }
                     }, enabled = !saved) {
                         Icon(
                             Icons.Default.Save,

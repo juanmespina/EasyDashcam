@@ -51,6 +51,9 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     /** uniqueId → MediaStore uri for files already on the phone. */
     private val _localFiles = MutableStateFlow<Map<Int, Uri>>(emptyMap())
     val localFiles: StateFlow<Map<Int, Uri>> = _localFiles
+    /** uniqueIds whose local file is a truncated partial-stream save. */
+    private val _partialLocal = MutableStateFlow<Set<Int>>(emptySet())
+    val partialLocal: StateFlow<Set<Int>> = _partialLocal
 
     /** null = not loaded yet; empty = connected but camera reported none. */
     private val _files = MutableStateFlow<List<GpsocketClient.CameraFile>?>(null)
@@ -162,6 +165,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             // The suffix anchored at the end matches both.
             val nameRx = Regex("""([0-9a-fA-F]{4})([A-Z])\.(avi|jpg)$""")
             val out = mutableMapOf<Int, Uri>()
+            val partials = mutableSetOf<Int>()
             if (Build.VERSION.SDK_INT < 29) {
                 // Pre-29 downloads live in app-private storage — MediaStore
                 // can't see them, so scan the directory directly.
@@ -169,8 +173,9 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                     .getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES)
                 dir?.listFiles()?.forEach { f ->
                     val m = nameRx.find(f.name) ?: return@forEach
-                    out[(m.groupValues[1].toInt(16) shl 8) or m.groupValues[2][0].code] =
-                        Uri.fromFile(f)
+                    val uid = (m.groupValues[1].toInt(16) shl 8) or m.groupValues[2][0].code
+                    out[uid] = Uri.fromFile(f)
+                    if ("_partial_" in f.name) partials += uid
                 }
             } else {
                 val collection = MediaStore.Video.Media
@@ -185,13 +190,16 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                     val idCol = c.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
                     val nameCol = c.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
                     while (c.moveToNext()) {
-                        val m = nameRx.find(c.getString(nameCol)) ?: continue
+                        val name = c.getString(nameCol)
+                        val m = nameRx.find(name) ?: continue
                         val uid = (m.groupValues[1].toInt(16) shl 8) or m.groupValues[2][0].code
                         out[uid] = ContentUris.withAppendedId(collection, c.getLong(idCol))
+                        if ("_partial_" in name) partials += uid
                     }
                 }
             }
             _localFiles.value = out
+            _partialLocal.value = partials
             // Reconcile: a "done" entry whose MediaStore file was deleted
             // should become downloadable again, not marked downloaded forever.
             session.downloads.value.forEach { (uid, d) ->
@@ -274,13 +282,17 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         client.downloadFile(f, out, onProgress = onProgress)
 
     /**
-     * Adopt a fully streamed temp file into the gallery — the bytes are
-     * already local, so saving is a copy, not a re-download.
+     * Adopt a streamed temp file into the gallery — the bytes are
+     * already local, so saving is a copy, not a re-download. A partial
+     * stream saves a truncated (still playable) AVI under a marked name.
      */
-    suspend fun saveStreamed(f: GpsocketClient.CameraFile, src: java.io.File): Boolean =
+    suspend fun saveStreamed(
+        f: GpsocketClient.CameraFile, src: java.io.File, partial: Boolean = false
+    ): Boolean =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             runCatching {
-                val dest = ClipStore.open(getApplication(), f) ?: return@runCatching false
+                val dest = ClipStore.open(getApplication(), f, partial)
+                    ?: return@runCatching false
                 val head = ByteArray(4)
                 java.io.FileInputStream(src).use { it.read(head, 0, 4) }
                 val isJpeg = head[0] == 0xFF.toByte() && head[1] == 0xD8.toByte()
