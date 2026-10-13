@@ -100,6 +100,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withPermit
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -463,23 +464,29 @@ private data class ClipMeta(val thumb: Bitmap?, val durationSec: Int?)
 
 private object ClipMetaCache {
     private val cache = android.util.LruCache<String, ClipMeta>(64)
+    // Fling past a day of downloaded clips and every visible row fires a
+    // probe + JPEG decode — bound it or the tablet's CPU is the bottleneck.
+    private val gate = kotlinx.coroutines.sync.Semaphore(3)
+
     fun get(uri: Uri): ClipMeta? = cache.get(uri.toString())
     suspend fun load(context: android.content.Context, uri: Uri): ClipMeta =
-        get(uri) ?: kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching {
-                context.contentResolver.openFileDescriptor(uri, "r")!!.use { pfd ->
-                    AviMjpegPlayer(java.io.FileInputStream(pfd.fileDescriptor).channel).use { p ->
-                        p.probe()   // header only — no 'movi' walk
-                        ClipMeta(
-                            thumb = p.thumbnail(360),
-                            durationSec = p.probeDurationSec?.let { (it + 0.5).toInt() }
-                        )
+        get(uri) ?: gate.withPermit {
+            get(uri) ?: kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openFileDescriptor(uri, "r")!!.use { pfd ->
+                        AviMjpegPlayer(java.io.FileInputStream(pfd.fileDescriptor).channel).use { p ->
+                            p.probe()   // header only — no 'movi' walk
+                            ClipMeta(
+                                thumb = p.thumbnail(360),
+                                durationSec = p.probeDurationSec?.let { (it + 0.5).toInt() }
+                            )
+                        }
                     }
-                }
-            }.getOrDefault(ClipMeta(null, null))
-            // Don't cache failures — a transient error (e.g. file still
-            // being finalized) shouldn't hide the thumbnail forever.
-        }.also { if (it.thumb != null || it.durationSec != null) cache.put(uri.toString(), it) }
+                }.getOrDefault(ClipMeta(null, null))
+                // Don't cache failures — a transient error (e.g. file still
+                // being finalized) shouldn't hide the thumbnail forever.
+            }.also { if (it.thumb != null || it.durationSec != null) cache.put(uri.toString(), it) }
+        }
 }
 
 private fun shareFile(context: android.content.Context, uri: Uri, isImage: Boolean) {

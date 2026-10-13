@@ -73,6 +73,11 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     private var filesFetchedAt = 0L
     private var settingsLoadedAt = 0L
 
+    // The last file list also lives on disk: a cold start (or a reconnect
+    // while a download holds the socket) shows the gallery instantly and
+    // refreshes in the background instead of blocking on ~50 round-trips.
+    private val filesCache = java.io.File(app.filesDir, "files_cache.txt")
+
     /** One-shot user messages (errors, applied settings). */
     private val _notices = MutableStateFlow<List<String>>(emptyList())
     val notices: StateFlow<List<String>> = _notices
@@ -90,9 +95,9 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 if (s is GpsocketClient.State.Connected && !wasConnected) {
                     filesFetchedAt = 0
                     settingsLoadedAt = 0
-                    _files.value = null
                     _settings.value = null
                     session.clearDownloads()
+                    restorePersistedFiles()   // show last-known list while refetching
                 }
             }
         }
@@ -125,6 +130,26 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             downloads.collect { m ->
                 if (m.values.any { it.done && it.error == null }) refreshLocalFiles()
             }
+        }
+        restorePersistedFiles()
+    }
+
+    /** Load the disk-cached file list — used on cold start and on reconnect
+     *  so the gallery has content while the fresh fetch is in flight. */
+    private fun restorePersistedFiles() {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                filesCache.readLines().mapNotNull { line ->
+                    val p = line.split('|')
+                    if (p.size < 4) return@mapNotNull null
+                    GpsocketClient.CameraFile(
+                        kind = p[0].toInt(), id = p[1].toInt(),
+                        timestamp = p[2].takeIf { it.isNotEmpty() }
+                            ?.let { runCatching { java.time.LocalDateTime.parse(it) }.getOrNull() },
+                        size = p[3].toLong()
+                    )
+                }
+            }.onSuccess { if (it.isNotEmpty() && _files.value == null) _files.value = it }
         }
     }
 
@@ -206,8 +231,10 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             _filesLoading.value = true
             runCatching { client.listFiles() }
                 .onSuccess {
-                    _files.value = it.sortedByDescending { f -> f.timestamp }
+                    val sorted = it.sortedByDescending { f -> f.timestamp }
+                    _files.value = sorted
                     filesFetchedAt = System.currentTimeMillis()
+                    persistFiles(sorted)
                     if (session.autoDownload.value) autoEnqueueNew(it)
                 }
                 .onFailure { notice("file list failed: ${it.message}") }
@@ -229,6 +256,16 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     fun download(f: GpsocketClient.CameraFile) {
         ContextCompat.startForegroundService(
             getApplication(), DownloadService.downloadIntent(getApplication(), f))
+    }
+
+    private fun persistFiles(files: List<GpsocketClient.CameraFile>) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                filesCache.writeText(files.joinToString("\n") { f ->
+                    "${f.kind}|${f.id}|${f.timestamp ?: ""}|${f.size}"
+                })
+            }
+        }
     }
 
     /** Enqueue records newer than the sync watermark — clips that existed

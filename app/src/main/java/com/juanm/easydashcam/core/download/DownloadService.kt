@@ -193,17 +193,17 @@ class DownloadService : Service() {
             sniffed.use {
                 session.client.downloadFile(f, it) { got, total ->
                     if (f.uniqueId in cancelled) throw CancellationException("user cancelled")
-                    val elapsed = System.currentTimeMillis() - startMs
-                    val eta = if (elapsed > 1500 && got in 1 until total)
-                        (total - got) * elapsed / got / 1000 else null
-                    session.updateDownload(f.uniqueId,
-                        CameraSession.DownloadState(got, total, etaSec = eta))
-                    // The callback fires per 32 KiB chunk — NotificationManager
-                    // rate-limits anyway, but building the notification isn't
-                    // free, so post progress at most ~2/s.
+                    // The callback fires per 32 KiB chunk — every emission
+                    // recomposes the whole Files screen, so cap UI progress
+                    // at ~2/s (completion always posts).
                     val now = System.currentTimeMillis()
                     if (now - lastNotifMs >= 500 || got >= total) {
                         lastNotifMs = now
+                        val elapsed = now - startMs
+                        val eta = if (elapsed > 1500 && got in 1 until total)
+                            (total - got) * elapsed / got / 1000 else null
+                        session.updateDownload(f.uniqueId,
+                            CameraSession.DownloadState(got, total, etaSec = eta))
                         nm.notify(NOTIF_ID, notification(
                             "$label — ${got / 1024}/${total / 1024} KiB" +
                                 (eta?.let { e -> ", ~$e s left" } ?: "") +
