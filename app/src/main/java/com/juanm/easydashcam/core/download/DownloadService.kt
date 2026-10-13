@@ -70,7 +70,8 @@ class DownloadService : Service() {
     private val cancelled = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
     private lateinit var session: CameraSession
     private lateinit var nm: NotificationManager
-    private var worker = false
+    // Written on main (onStartCommand) and reset by the IO worker.
+    @Volatile private var worker = false
 
     override fun onCreate() {
         super.onCreate()
@@ -112,7 +113,10 @@ class DownloadService : Service() {
         @Suppress("DEPRECATION") // partial wake lock is still the right tool for a socket transfer
         val wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "easydashcam:download")
         wakeLock.acquire(60 * 60 * 1000L)
-        scope.launch {
+        // IO, not Main: every 32 KiB chunk is written to disk from the
+        // worker's context — on Main that meant ~1900 main-thread flash
+        // writes per clip.
+        scope.launch(Dispatchers.IO) {
             try {
                 while (true) {
                     // Idle-timeout: shut down when the queue stays empty, so the
@@ -178,6 +182,7 @@ class DownloadService : Service() {
         }
 
         val startMs = System.currentTimeMillis()
+        var lastNotifMs = 0L
         val result = try {
             sniffed.use {
                 session.client.downloadFile(f, it) { got, total ->
@@ -187,9 +192,16 @@ class DownloadService : Service() {
                         (total - got) * elapsed / got / 1000 else null
                     session.updateDownload(f.uniqueId,
                         CameraSession.DownloadState(got, total, etaSec = eta))
-                    nm.notify(NOTIF_ID, notification(
-                        "$label — ${got / 1024}/${total / 1024} KiB" +
-                            (eta?.let { e -> ", ~$e s left" } ?: ""), f.uniqueId))
+                    // The callback fires per 32 KiB chunk — NotificationManager
+                    // rate-limits anyway, but building the notification isn't
+                    // free, so post progress at most ~2/s.
+                    val now = System.currentTimeMillis()
+                    if (now - lastNotifMs >= 500 || got >= total) {
+                        lastNotifMs = now
+                        nm.notify(NOTIF_ID, notification(
+                            "$label — ${got / 1024}/${total / 1024} KiB" +
+                                (eta?.let { e -> ", ~$e s left" } ?: ""), f.uniqueId))
+                    }
                 }
             }
         } catch (_: CancellationException) {
