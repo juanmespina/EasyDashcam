@@ -287,4 +287,17 @@ class AviMjpegPlayerTest {
             writer.close()
         }
     }
+
+    @Test
+    fun `reads on a closed channel return empty instead of throwing`() = runBlocking {
+        // close() can race an in-flight audioRead/frameAt on another
+        // coroutine — a dead channel must read as "no data", not crash.
+        val p = playerFor(buildAvi(frames = listOf(jpeg(1)),
+            audioChunks = listOf(ByteArray(4))))
+        p.index()
+        p.close()
+        assertNull(p.frameAt(0))
+        assertNull(p.thumbnail(160))
+        assertEquals(-1, p.audioRead(0, ByteArray(64)))
+    }
 }

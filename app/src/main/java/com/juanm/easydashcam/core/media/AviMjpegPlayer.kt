@@ -110,7 +110,7 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
         val size = ch.size()
         if (!headerDone) {
             if (size < 4) return@withContext 0   // magic still in flight
-            val magic = readBytesAt(0, 4)!!
+            val magic = readBytesAt(0, 4) ?: return@withContext 0
 
             // Raw JPEG payload (photo records): no RIFF wrapper.
             if (magic[0] == 0xFF.toByte() && magic[1] == 0xD8.toByte()) {
@@ -122,15 +122,16 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
             }
             if (!magic.contentEquals("RIFF".toByteArray())) throw AviException("not RIFF/AVI")
             if (size < 12) return@withContext 0   // rest of RIFF header in flight
-            riffSize = u32le(readBytesAt(4, 4)!!) + 8
-            if (!readBytesAt(8, 4)!!.contentEquals("AVI ".toByteArray())) throw AviException("not AVI")
+            riffSize = u32le(readBytesAt(4, 4) ?: return@withContext 0) + 8
+            if (!(readBytesAt(8, 4) ?: return@withContext 0)
+                    .contentEquals("AVI ".toByteArray())) throw AviException("not AVI")
             scanPos = 12
             headerDone = true
         }
 
         var added = 0
         while (scanPos + 8 <= minOf(riffSize, size)) {
-            val hdr = readBytesAt(scanPos, 8)!!
+            val hdr = readBytesAt(scanPos, 8) ?: break
             val id = hdr.copyOfRange(0, 4)
             val len = u32le(hdr, 4)
             val chunkEnd = scanPos + 8 + len + (len and 1)   // RIFF word-aligns odd sizes
@@ -278,14 +279,20 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
         id[2] == 'w'.code.toByte() && id[3] == 'b'.code.toByte()
 
     /** Positional read — doesn't touch the channel's file position, so the
-     *  video decode loop and the audio feeder can share [ch] without a lock. */
+     *  video decode loop and the audio feeder can share [ch] without a lock.
+     *  A close() racing an in-flight read shows up as an IOException —
+     *  callers treat it as "no data". */
     private fun readBytesAt(offset: Long, n: Int): ByteArray? {
         val buf = ByteBuffer.allocate(n)
         var pos = offset
-        while (buf.hasRemaining()) {
-            val r = ch.read(buf, pos)
-            if (r < 0) return null
-            pos += r
+        try {
+            while (buf.hasRemaining()) {
+                val r = ch.read(buf, pos)
+                if (r < 0) return null
+                pos += r
+            }
+        } catch (_: java.io.IOException) {
+            return null
         }
         return buf.array()
     }
