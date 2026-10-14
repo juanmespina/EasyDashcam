@@ -8,6 +8,8 @@
         <service
             android:name=".core.download.DownloadService"
             android:exported="true"
-            tools:replace="android:exported" />
+            android:foregroundServiceType="dataSync"
+            tools:replace="android:exported"
+            tools:ignore="ExportedService" />
     </application>
 </manifest>
