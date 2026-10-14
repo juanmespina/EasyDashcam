@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Easy Dashcam</string>
+
+    <!-- Navigation -->
+    <string name="nav_live">En vivo</string>
+    <string name="nav_files">Archivos</string>
+    <string name="nav_settings">Ajustes</string>
+    <string name="nav_debug">Registro de depuración</string>
+    <string name="menu_overflow">Menú</string>
+    <string name="menu_disconnect">Desconectar</string>
+
+    <!-- Connection -->
+    <string name="connect">Conectar</string>
+    <string name="connecting">Conectando a la cámara…</string>
+    <string name="connection_error">Error: %1$s</string>
+    <string name="join_hotspot">Conéctate al Wi-Fi de la cámara y luego pulsa Conectar</string>
+    <string name="open_wifi_settings">Abrir ajustes de Wi-Fi</string>
+    <string name="err_no_wifi">Sin red Wi-Fi — conéctate primero al hotspot de la cámara.</string>
+
+    <!-- Files: filters and toolbar -->
+    <string name="filter_all">Todo</string>
+    <string name="filter_videos">Vídeos</string>
+    <string name="filter_photos">Fotos</string>
+    <string name="filter_on_device">En el dispositivo</string>
+    <string name="download_all">Descargar todo (%1$d · %2$.0f MB)</string>
+    <string name="filter_by_date">Filtrar por fecha</string>
+    <string name="date_all">Todas las fechas</string>
+    <string name="date_today">Hoy</string>
+    <string name="date_yesterday">Ayer</string>
+    <string name="date_pick">Elegir fecha…</string>
+    <string name="clear_filter">Quitar filtro</string>
+    <string name="sort">Ordenar</string>
+    <string name="sort_newest">Más recientes</string>
+    <string name="sort_oldest">Más antiguos</string>
+    <string name="sort_largest">Más grandes</string>
+    <string name="sort_smallest">Más pequeños</string>
+    <string name="auto_download_off">Descargar clips nuevos automáticamente</string>
+    <string name="auto_download_on">Descarga automática activada — toca para desactivar</string>
+    <string name="view_mode_switch">%1$s — toca para cambiar</string>
+    <string name="view_list">Lista</string>
+    <string name="view_grid">Cuadrícula</string>
+    <string name="view_timeline">Cronología</string>
+
+    <!-- Files: list states and row details -->
+    <string name="pull_to_refresh">Desliza hacia abajo para actualizar</string>
+    <string name="no_recordings">No hay grabaciones en la cámara</string>
+    <string name="nothing_matches">Nada coincide con este filtro</string>
+    <string name="unknown_date">Fecha desconocida</string>
+    <string name="id_fallback">id 0x%1$04x</string>
+    <string name="kind_locked">Bloqueado</string>
+    <string name="kind_photo">Foto</string>
+    <string name="kind_video">Vídeo</string>
+    <string name="kind_other">Tipo %1$c</string>
+    <string name="detail_base">%1$s · %2$.1f MB</string>
+    <string name="detail_duration"> · ~%1$dm %2$02ds</string>
+    <string name="detail_eta"> · quedan ~%1$ds</string>
+    <string name="detail_still_recording"> · ¿grabando aún?</string>
+    <string name="detail_downloaded"> · descargado</string>
+    <string name="detail_partial"> · parcial</string>
+    <string name="gap_hours">"  ~%1$dh %2$02dm sin grabar  "</string>
+    <string name="gap_minutes">"  ~%1$dm sin grabar  "</string>
+    <plurals name="locked_clips_hidden">
+        <item quantity="one">%1$d clip protegido oculto — la cámara no sirve archivos bloqueados</item>
+        <item quantity="many">%1$d clips protegidos ocultos — la cámara no sirve archivos bloqueados</item>
+        <item quantity="other">%1$d clips protegidos ocultos — la cámara no sirve archivos bloqueados</item>
+    </plurals>
+    <string name="storage_free">%1$.1f GB libres en el dispositivo</string>
+
+    <!-- Files: actions -->
+    <string name="action_stream">Reproducir sin descargar</string>
+    <string name="download">Descargar</string>
+    <string name="downloaded">Descargado</string>
+    <string name="download_failed_retry">Falló: %1$s — toca para reintentar</string>
+    <string name="play_downloaded">Reproducir archivo descargado</string>
+    <string name="downloaded_file">Archivo descargado</string>
+    <string name="local_copy">Copia local en este dispositivo</string>
+    <string name="play">Reproducir</string>
+    <string name="pause">Pausar</string>
+    <string name="share">Compartir</string>
+    <string name="share_clip">Compartir clip</string>
+    <string name="delete">Eliminar</string>
+    <string name="cancel">Cancelar</string>
+    <string name="ok">Aceptar</string>
+
+    <!-- Player -->
+    <string name="cannot_play">No se puede reproducir: %1$s</string>
+    <string name="playback">Reproducción</string>
+    <string name="save_to_device">Guardar en el dispositivo</string>
+    <string name="close">Cerrar</string>
+    <string name="back_1s">Atrás 1 s</string>
+    <string name="forward_1s">Adelante 1 s</string>
+    <string name="buffering_pct">Cargando — %1$.0f%%</string>
+    <string name="buffering">Cargando…</string>
+    <string name="streaming_pct">Transmitiendo — %1$.0f%%</string>
+    <string name="player_position">%1$.1f / %2$.1f s</string>
+    <string name="err_file_unavailable">archivo no disponible</string>
+    <string name="err_camera_refused">la cámara lo rechazó — puede que aún esté grabando</string>
+    <string name="err_transfer_stopped">la transferencia se detuvo antes de tiempo</string>
+    <string name="err_no_video_frames">sin fotogramas de vídeo</string>
+
+    <!-- Live -->
+    <string name="live_preview">Vista en vivo</string>
+    <string name="waiting_stream">Esperando la transmisión…</string>
+    <string name="stream_error">Error de transmisión: %1$s</string>
+    <string name="stream_ended">Transmisión finalizada</string>
+    <string name="mute">Silenciar</string>
+    <string name="unmute">Activar sonido</string>
+    <string name="save_snapshot">Guardar captura</string>
+    <string name="snapshot_saved">Captura guardada en Fotos</string>
+    <string name="snapshot_failed">Error al guardar la captura</string>
+    <string name="download_in_progress">Descarga en curso — la vista previa puede pausarse</string>
+
+    <!-- Settings -->
+    <string name="no_settings">No hay ajustes disponibles</string>
+    <string name="about_version">v%1$s · solo local, sin cuentas</string>
+    <string name="setdesc_0000">Calidad de vídeo. Mayor resolución = placas y señales más nítidas, archivos más grandes.</string>
+    <string name="setdesc_0003">Duración de cada archivo de bucle. Cuando la tarjeta se llena, se sobrescribe el clip más antiguo.</string>
+    <string name="setdesc_0004">Rango dinámico amplio (WDR) — equilibra el cielo brillante con las sombras, p. ej. al salir de un túnel.</string>
+    <string name="setdesc_0005">Incluir audio del micrófono en las grabaciones.</string>
+    <string name="setdesc_0100">Tamaño de la foto en megapíxeles.</string>
+    <string name="setdesc_0101">Brillo manual. Súbelo en escenas oscuras, bájalo si el cielo sale quemado.</string>
+    <string name="setdesc_0108">Temperatura de color según la iluminación; Automático vale para la mayoría de los trayectos.</string>
+    <string name="setdesc_0200">Frecuencia de red eléctrica de tu región (50 Hz Europa, 60 Hz América). Un valor incorrecto hace que farolas y salpicaderos parpadeen en el vídeo.</string>
+    <string name="setdesc_0201">Cuánto tiempo permanece encendida la pantalla LCD de la cámara antes de apagarse.</string>
+    <string name="setdesc_0205">Orden de la fecha impresa en las grabaciones.</string>
+    <string name="setdesc_0209">Versión del firmware de la cámara.</string>
+
+    <!-- Debug -->
+    <string name="dbg_menu_xml">XML del menú</string>
+    <string name="dbg_files">Archivos</string>
+    <string name="dbg_settings">Ajustes</string>
+    <string name="dbg_download">Descargar</string>
+    <string name="dbg_share_log">Compartir registro</string>
+    <string name="dbg_camera_frames">Tramas de la cámara</string>
+    <string name="dbg_share_title">Compartir registro de depuración</string>
+
+    <!-- Download service / notifications -->
+    <string name="channel_downloads">Descargas</string>
+    <string name="channel_download_results">Resultados de descargas</string>
+    <string name="notif_preparing">Preparando descarga…</string>
+    <string name="notif_progress">%1$s — %2$d/%3$d KiB</string>
+    <string name="notif_eta">, quedan ~%1$d s</string>
+    <string name="notif_file_n"> · archivo %1$d/%2$d</string>
+    <string name="notif_download_complete">Descarga completada</string>
+    <string name="notif_download_failed">Descarga fallida: %1$s</string>
+    <string name="dl_err_no_dest">sin destino</string>
+    <string name="dl_err_cancelled">cancelado</string>
+    <string name="dl_err_refused">la cámara lo rechazó (¿aún grabando?)</string>
+    <string name="dl_err_stalled">detenido en %1$d/%2$d B</string>
+
+    <!-- ViewModel notices -->
+    <string name="notice_file_list_failed">error al listar archivos: %1$s</string>
+    <string name="notice_deleted">Eliminado del dispositivo</string>
+    <string name="notice_delete_failed">Error al eliminar</string>
+    <plurals name="notice_auto_download">
+        <item quantity="one">Descargando %1$d clip nuevo automáticamente</item>
+        <item quantity="many">Descargando %1$d clips nuevos automáticamente</item>
+        <item quantity="other">Descargando %1$d clips nuevos automáticamente</item>
+    </plurals>
+    <string name="notice_settings_failed">error en los ajustes: %1$s</string>
+    <string name="notice_setting_rejected">ajuste rechazado: 0x%1$04x</string>
+</resources>
