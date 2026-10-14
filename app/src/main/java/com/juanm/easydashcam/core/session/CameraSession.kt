@@ -64,7 +64,9 @@ class CameraSession(context: Context) {
     val autoDownload: StateFlow<Boolean> = _autoDownload
 
     fun setAutoDownload(on: Boolean) {
-        if (on && !prefs.contains("auto_ts"))
+        // Re-enabling after a gap re-bases the watermark — otherwise every
+        // clip recorded while it was off would queue as "new" all at once.
+        if (on && !_autoDownload.value)
             autoSyncWatermark = java.time.LocalDateTime.now()
         prefs.edit().putBoolean("auto_download", on).apply()
         _autoDownload.value = on
