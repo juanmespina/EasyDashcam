@@ -237,7 +237,10 @@ class RtspMjpegClient(
                 val q = d[p + 1].toInt() and 0xFF
                 p += 4
                 if (jpegType >= 64) p += 4                     // restart marker hdr (2B type + 2B data)
-                if (q >= 100) {                                // per-packet quant tables
+                // RFC 2435: dynamic quant tables only for Q >= 128, and only
+                // in the frame's first fragment — skipping them mid-frame
+                // would corrupt the payload offset.
+                if (q >= 128 && fragOff == 0) {
                     val qtLen = (d[p + 2].toInt() and 0xFF shl 8) or (d[p + 3].toInt() and 0xFF)
                     p += 4 + qtLen                             // DRI(2)+len(2)+tables
                 }
