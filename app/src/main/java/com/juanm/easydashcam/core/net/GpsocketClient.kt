@@ -460,7 +460,13 @@ class GpsocketClient(
         onProgress: (received: Long, total: Long) -> Unit = { _, _ -> }
     ): DownloadResult = requestLock.withLock {
         heartbeatJob?.cancel()   // Viidure sends no keepalives mid-transfer
-        val ch = kotlinx.coroutines.channels.Channel<Frame>(64)
+        // UNLIMITED: trySend on a 64-slot channel silently dropped chunks
+        // whenever the disk writer stalled ~1 s, ending transfers as
+        // Incomplete. The camera streams one finite file, so backlog size
+        // is bounded by file size — suspending send() would instead stall
+        // the shared _frames collector and starve other commands.
+        val ch = kotlinx.coroutines.channels.Channel<Frame>(
+            kotlinx.coroutines.channels.Channel.UNLIMITED)
         val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
             _frames.collect {
                 if (it.cmd == CMD_FILE_SELECT || it.cmd == CMD_MEDIA_CLASS || it.cmd == CMD_DOWNLOAD)
