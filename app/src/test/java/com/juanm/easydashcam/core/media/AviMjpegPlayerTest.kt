@@ -267,7 +267,10 @@ class AviMjpegPlayerTest {
 
             p.extendIndex()
             val before = p.frames.size
-            assert(before in 0..2)
+            // The leading complete frame must index even though the movi
+            // list declares the full file size — requiring its whole body
+            // would hold indexing hostage until the download finishes.
+            assert(before in 1..2)
             assert(!p.fullyIndexed)
 
             // A dangling half-written chunk header must not crash or consume.

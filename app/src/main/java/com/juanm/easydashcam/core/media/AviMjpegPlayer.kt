@@ -134,11 +134,16 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
             val id = hdr.copyOfRange(0, 4)
             val len = u32le(hdr, 4)
             val chunkEnd = scanPos + 8 + len + (len and 1)   // RIFF word-aligns odd sizes
-            if (chunkEnd > size) break   // partial chunk — resume here next call
             val content = scanPos + 8
+            val isList = id.contentEquals("LIST".toByteArray())
+            // A LIST only needs its 4-byte subtype present — the walk
+            // descends and stops at the incomplete tail by itself. movi
+            // spans nearly the whole file, so requiring its full body here
+            // would block indexing until the download is ~100% done.
+            if (chunkEnd > size && !(isList && content + 4 <= size)) break
 
             when {
-                id.contentEquals("LIST".toByteArray()) -> {
+                isList -> {
                     val type = if (len >= 4) readBytesAt(content, 4) else null
                     scanPos = content + 4
                     if (type != null && type.contentEquals("movi".toByteArray())) {
