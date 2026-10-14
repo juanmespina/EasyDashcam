@@ -233,7 +233,12 @@ class DownloadService : Service() {
                 val magic = head.toByteArray()
                 val isJpeg = magic.size >= 2 &&
                     magic[0] == 0xFF.toByte() && magic[1] == 0xD8.toByte()
-                ClipStore.commit(this, dest, isJpeg)
+                runCatching { ClipStore.commit(this, dest, isJpeg) }
+                    .onFailure {
+                        failFile(dest, f.uniqueId,
+                            it.message ?: it.javaClass.simpleName)
+                        return
+                    }
                 finishFile(f.uniqueId)
             }
             is GpsocketClient.DownloadResult.Refused ->

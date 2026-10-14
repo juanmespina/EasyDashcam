@@ -141,7 +141,7 @@ fix that can be tested without a device.
   shows as not downloaded and gets downloaded again.
 - **To check first:** download one photo on a device and see if it shows in
   the gallery and in the app as downloaded.
-- **Decision:** Fix now, verify on device — the code gap was real: `refreshLocalFiles` queried only `MediaStore.Video`, so a JPEG-committed photo could never map back. Now queries Images too. Device check of the MediaStore update path still open.
+- **Decision:** Fix now, verify on device — the code gap was real: `refreshLocalFiles` queried only `MediaStore.Video`, so a JPEG-committed photo could never map back. Now queries Images too. **Device check (API 34 tablet):** the MIME-flip update is rejected outright — `IllegalArgumentException: MIME type image/jpeg cannot be inserted into content://media/external/video/media/…; expected MIME type under video/*`. Un-guarded, that would have crashed the worker on every photo. `commit()` now inserts a fresh Images row, copies the bytes over, and deletes the pending Video row; the call site is wrapped in `runCatching` so a store failure fails the download instead of the app. No `J` records exist on the test card, so end-to-end photo download remains unverified — the MediaStore insert/move path itself was probe-tested via `content insert`/`update`.
 
 ## 9. Auto-download start time is never reset
 

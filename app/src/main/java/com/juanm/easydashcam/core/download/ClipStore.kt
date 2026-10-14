@@ -57,23 +57,49 @@ object ClipStore {
         return Dest(label, null, fallback, fallback.outputStream())
     }
 
-    /** Clears IS_PENDING; photo payloads are raw JPEG, so they get renamed
-     *  into Pictures with the right MIME type. */
+    /** Clears IS_PENDING. Photo payloads are raw JPEG — MediaStore rejects a
+     *  mime-type flip on a Video row (image/ is not allowed under the video
+     *  collection), so the bytes are moved to a fresh Images row instead. */
     fun commit(context: Context, dest: Dest, isJpeg: Boolean) {
         if (Build.VERSION.SDK_INT >= 29 && dest.uri != null) {
-            context.contentResolver.update(dest.uri, ContentValues().apply {
-                put(MediaStore.Video.Media.IS_PENDING, 0)
-                if (isJpeg) {
-                    put(MediaStore.Video.Media.DISPLAY_NAME,
-                        dest.label.removeSuffix(".avi") + ".jpg")
-                    put(MediaStore.Video.Media.MIME_TYPE, "image/jpeg")
-                    put(MediaStore.Video.Media.RELATIVE_PATH,
-                        Environment.DIRECTORY_PICTURES + "/EasyDashcam")
+            if (!isJpeg) {
+                context.contentResolver.update(dest.uri, ContentValues().apply {
+                    put(MediaStore.Video.Media.IS_PENDING, 0)
+                }, null, null)
+                return
+            }
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME,
+                    dest.label.removeSuffix(".avi") + ".jpg")
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(MediaStore.Images.Media.RELATIVE_PATH,
+                    Environment.DIRECTORY_PICTURES + "/EasyDashcam")
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+            val imgUri = context.contentResolver.insert(
+                MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                values) ?: throw java.io.IOException("photo insert failed")
+            try {
+                context.contentResolver.openInputStream(dest.uri).use { src ->
+                    context.contentResolver.openOutputStream(imgUri).use { dst ->
+                        if (src == null || dst == null)
+                            throw java.io.IOException("photo copy failed")
+                        src.copyTo(dst)
+                    }
                 }
-            }, null, null)
+                context.contentResolver.update(imgUri, ContentValues().apply {
+                    put(MediaStore.Images.Media.IS_PENDING, 0)
+                }, null, null)
+                context.contentResolver.delete(dest.uri, null, null)
+            } catch (e: Exception) {
+                runCatching { context.contentResolver.delete(imgUri, null, null) }
+                throw e
+            }
         } else if (isJpeg && dest.fallback != null) {
             dest.fallback.renameTo(
                 File(dest.fallback.parentFile, dest.label.removeSuffix(".avi") + ".jpg"))
+        } else {
+            // API <29 videos: nothing to clear, the file is already final.
         }
     }
 
