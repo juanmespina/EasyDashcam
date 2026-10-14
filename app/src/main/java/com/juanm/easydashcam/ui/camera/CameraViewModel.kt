@@ -133,9 +133,12 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         viewModelScope.launch {
-            downloads.collect { m ->
-                if (m.values.any { it.done && it.error == null }) refreshLocalFiles()
-            }
+            // Emit only when the set of successful ids changes — otherwise a
+            // MediaStore scan ran on every progress tick (~2/s per download).
+            downloads
+                .map { m -> m.filterValues { it.done && it.error == null }.keys }
+                .distinctUntilChanged()
+                .collect { if (it.isNotEmpty()) refreshLocalFiles() }
         }
         restorePersistedFiles()
     }
@@ -179,23 +182,30 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                     if ("_partial_" in f.name) partials += uid
                 }
             } else {
-                val collection = MediaStore.Video.Media
-                    .getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                getApplication<Application>().contentResolver.query(
-                    collection,
-                    arrayOf(MediaStore.Video.Media._ID, MediaStore.Video.Media.DISPLAY_NAME),
-                    "(${MediaStore.Video.Media.RELATIVE_PATH} LIKE 'Movies/EasyDashcam/%'" +
-                        " OR ${MediaStore.Video.Media.RELATIVE_PATH} LIKE 'Pictures/EasyDashcam/%')",
-                    null, null
-                )?.use { c ->
-                    val idCol = c.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
-                    val nameCol = c.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
-                    while (c.moveToNext()) {
-                        val name = c.getString(nameCol)
-                        val m = nameRx.find(name) ?: continue
-                        val uid = (m.groupValues[1].toInt(16) shl 8) or m.groupValues[2][0].code
-                        out[uid] = ContentUris.withAppendedId(collection, c.getLong(idCol))
-                        if ("_partial_" in name) partials += uid
+                // Clips live in the Video collection; photos got their MIME
+                // flipped to image/jpeg at commit, so they land in Images.
+                // Query both — the other never sees them.
+                for (collection in listOf(
+                    MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                    MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                )) {
+                    getApplication<Application>().contentResolver.query(
+                        collection,
+                        arrayOf(MediaStore.MediaColumns._ID,
+                            MediaStore.MediaColumns.DISPLAY_NAME),
+                        "(${MediaStore.MediaColumns.RELATIVE_PATH} LIKE 'Movies/EasyDashcam/%'" +
+                            " OR ${MediaStore.MediaColumns.RELATIVE_PATH} LIKE 'Pictures/EasyDashcam/%')",
+                        null, null
+                    )?.use { c ->
+                        val idCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+                        val nameCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+                        while (c.moveToNext()) {
+                            val name = c.getString(nameCol)
+                            val m = nameRx.find(name) ?: continue
+                            val uid = (m.groupValues[1].toInt(16) shl 8) or m.groupValues[2][0].code
+                            out[uid] = ContentUris.withAppendedId(collection, c.getLong(idCol))
+                            if ("_partial_" in name) partials += uid
+                        }
                     }
                 }
             }
@@ -204,7 +214,9 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             // Reconcile: a "done" entry whose MediaStore file was deleted
             // should become downloadable again, not marked downloaded forever.
             session.downloads.value.forEach { (uid, d) ->
-                if (d.done && uid !in out) session.removeDownload(uid)
+                // Only successful entries reconcile against disk — a failed
+                // download is also done, and dropping it erases the error mark.
+                if (d.done && d.error == null && uid !in out) session.removeDownload(uid)
             }
         }
     }
@@ -270,8 +282,23 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun download(f: GpsocketClient.CameraFile) {
-        ContextCompat.startForegroundService(
-            getApplication(), DownloadService.downloadIntent(getApplication(), f))
+        // Only a failed entry may re-queue — in-flight and completed entries
+        // would duplicate the MediaStore write.
+        val prev = session.downloads.value[f.uniqueId]
+        if (prev != null && !(prev.done && prev.error != null)) return
+        // Mark queued immediately — otherwise the intent is in flight for a
+        // while and the row still shows Download, inviting a duplicate queue.
+        session.updateDownload(f.uniqueId,
+            CameraSession.DownloadState(0, f.sizeBytes))
+        runCatching {
+            ContextCompat.startForegroundService(
+                getApplication(), DownloadService.downloadIntent(getApplication(), f))
+        }.onFailure {
+            // Queued marker would otherwise show a spinner forever.
+            session.removeDownload(f.uniqueId)
+            notice(getApplication<Application>()
+                .getString(R.string.notice_file_list_failed, it.message))
+        }
     }
 
     /**
