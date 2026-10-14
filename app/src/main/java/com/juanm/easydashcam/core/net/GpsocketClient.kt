@@ -401,19 +401,39 @@ class GpsocketClient(
             }
             try {
                 enterMode(MODE_FILE_LIST)
-                writePayload(CMD_FILE_LIST, byteArrayOf(0))
                 val files = ArrayList<CameraFile>()
-                for (p in 0 until maxPages) {
-                    val page = kotlinx.coroutines.withTimeout(timeoutMs) { ch.receive() }
+                // The camera drops a request now and then — resend the same
+                // start/resume a couple of times instead of discarding the
+                // whole list over one lost frame.
+                var resume: ByteArray? = null
+                var lastPageHead = -1
+                var retries = 0
+                var p = 0
+                while (p < maxPages) {
+                    resume?.let { writeArgs(CMD_FILE_LIST, it) }
+                        ?: writePayload(CMD_FILE_LIST, byteArrayOf(0))
+                    val page = try {
+                        kotlinx.coroutines.withTimeout(timeoutMs) { ch.receive() }
+                    } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                        if (++retries <= 2) continue
+                        throw java.io.IOException(
+                            "file list: no reply after $retries requests")
+                    }
                     // A type-3 error frame echoes the cmd — surface it instead
                     // of letting an empty parse truncate the list silently.
                     if (page.type == 3) throw java.io.IOException("file list refused by camera")
                     val recs = parseFileListPage(page.payload)
                     if (recs.isEmpty()) break
+                    // A resend after the camera already answered can queue a
+                    // second copy of the page — skip it or records duplicate.
+                    if (recs.first().id == lastPageHead) continue
                     files += recs
+                    retries = 0
+                    p++
                     if (recs.size < FILE_PAGE_SIZE) break
+                    lastPageHead = recs.first().id
                     val last = recs.last().id
-                    writeArgs(CMD_FILE_LIST, byteArrayOf(0, (last and 0xFF).toByte(), (last shr 8 and 0xFF).toByte()))
+                    resume = byteArrayOf(0, (last and 0xFF).toByte(), (last shr 8 and 0xFF).toByte())
                 }
                 // Parsed records — kind letters are the only media/channel
                 // discriminator the protocol offers.
