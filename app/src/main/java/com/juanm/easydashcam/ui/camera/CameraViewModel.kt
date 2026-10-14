@@ -262,6 +262,10 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                     if (session.autoDownload.value) autoEnqueueNew(it)
                 }
                 .onFailure {
+                    // A failed fetch shouldn't empty the gallery — the disk
+                    // cache still lists every record the camera last served,
+                    // and On device matches it against MediaStore copies.
+                    if (_files.value == null) restorePersistedFiles()
                     notice(getApplication<Application>()
                         .getString(R.string.notice_file_list_failed, it.message))
                 }
