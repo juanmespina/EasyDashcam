@@ -366,7 +366,8 @@ private fun FilesList(vm: CameraViewModel) {
                                     onDownload = { startDownload(f) },
                                     onPlay = uri?.let { { playing = it to (f.kindChar == 'J') } },
                                     onStream = if (uri == null) { { streaming = f } } else null,
-                                    onLongPress = uri?.let { { actionsFor = it to f } }
+                                    onLongPress = uri?.let { { actionsFor = it to f } },
+                                    onCancel = { vm.cancelDownload(f.uniqueId) }
                                 )
                             }
                         }
@@ -394,7 +395,8 @@ private fun FilesList(vm: CameraViewModel) {
                                             { startDownload(f) },
                                             uri?.let { { playing = it to (f.kindChar == 'J') } },
                                             if (uri == null) { { streaming = f } } else null,
-                                            uri?.let { { actionsFor = it to f } })
+                                            uri?.let { { actionsFor = it to f } },
+                                            { vm.cancelDownload(f.uniqueId) })
                                     } else {
                                         FileRow(
                                             file = f,
@@ -405,7 +407,8 @@ private fun FilesList(vm: CameraViewModel) {
                                             onDownload = { startDownload(f) },
                                             onPlay = uri?.let { { playing = it to (f.kindChar == 'J') } },
                                             onStream = if (uri == null) { { streaming = f } } else null,
-                                            onLongPress = uri?.let { { actionsFor = it to f } }
+                                            onLongPress = uri?.let { { actionsFor = it to f } },
+                                            onCancel = { vm.cancelDownload(f.uniqueId) }
                                         )
                                     }
                                     HorizontalDivider()
@@ -630,7 +633,8 @@ private fun TimelineRow(
     onDownload: () -> Unit,
     onPlay: (() -> Unit)?,
     onStream: (() -> Unit)?,
-    onLongPress: (() -> Unit)?
+    onLongPress: (() -> Unit)?,
+    onCancel: (() -> Unit)? = null
 ) {
     val rail = MaterialTheme.colorScheme.outlineVariant
     val meta = rememberClipMeta(localUri)
@@ -654,7 +658,7 @@ private fun TimelineRow(
                 localUri != null, partial))
         },
         trailingContent = {
-            DownloadTrailing(download, localUri != null, onDownload, onPlay, onStream)
+            DownloadTrailing(download, localUri != null, onDownload, onPlay, onStream, onCancel)
         },
         modifier = if (onLongPress != null)
             Modifier.combinedClickable(onClick = {}, onLongClick = onLongPress)
@@ -734,6 +738,7 @@ private fun FileRow(
     onPlay: (() -> Unit)?,
     onStream: (() -> Unit)?,
     onLongPress: (() -> Unit)? = null,
+    onCancel: (() -> Unit)? = null,
 ) {
     val icon = kindIcon(file)
     val kindDesc = kindLabel(file)
@@ -754,7 +759,7 @@ private fun FileRow(
                 localUri != null, partial))
         },
         trailingContent = {
-            DownloadTrailing(download, localUri != null, onDownload, onPlay, onStream)
+            DownloadTrailing(download, localUri != null, onDownload, onPlay, onStream, onCancel)
         },
         modifier = if (onLongPress != null)
             Modifier.combinedClickable(onClick = {}, onLongClick = onLongPress)
@@ -774,6 +779,7 @@ private fun FileTile(
     onPlay: (() -> Unit)?,
     onStream: (() -> Unit)?,
     onLongPress: (() -> Unit)?,
+    onCancel: (() -> Unit)? = null,
 ) {
     val icon = kindIcon(file)
     val kindDesc = kindLabel(file)
@@ -810,7 +816,7 @@ private fun FileTile(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Box(Modifier.align(Alignment.End)) {
-                    DownloadTrailing(download, localUri != null, onDownload, onPlay, onStream)
+                    DownloadTrailing(download, localUri != null, onDownload, onPlay, onStream, onCancel)
                 }
             }
         }
@@ -823,7 +829,8 @@ private fun DownloadTrailing(
     local: Boolean,
     onDownload: () -> Unit,
     onPlay: (() -> Unit)? = null,
-    onStream: (() -> Unit)? = null
+    onStream: (() -> Unit)? = null,
+    onCancel: (() -> Unit)? = null
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         // Streams straight from the camera — plays while the bytes arrive,
@@ -845,6 +852,27 @@ private fun DownloadTrailing(
                     modifier = Modifier.size(20.dp)
                 )
             }
+            // In-flight beats Play: while bytes are moving the row shows
+            // progress + cancel, even if a local copy already exists.
+            download != null && !download.done -> IconButton(
+                onClick = { onCancel?.invoke() },
+                enabled = onCancel != null
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    if (download.total > 0) {
+                        CircularProgressIndicator(
+                            progress = { (download.received.toFloat() / download.total).coerceIn(0f, 1f) },
+                            modifier = Modifier.size(28.dp)
+                        )
+                    } else {
+                        CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                    }
+                    Icon(Icons.Default.Close,
+                        contentDescription = stringResource(R.string.cancel),
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(16.dp))
+                }
+            }
             onPlay != null -> IconButton(onClick = onPlay) {
                 Icon(
                     Icons.Default.PlayArrow,
@@ -857,13 +885,6 @@ private fun DownloadTrailing(
                 contentDescription = stringResource(R.string.downloaded),
                 tint = MaterialTheme.colorScheme.primary
             )
-            download != null && download.total > 0 -> Box(contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(
-                    progress = { (download.received.toFloat() / download.total).coerceIn(0f, 1f) },
-                    modifier = Modifier.size(28.dp)
-                )
-            }
-            download != null -> CircularProgressIndicator(modifier = Modifier.size(28.dp))
             else -> IconButton(onClick = onDownload) {
                 Icon(Icons.Default.Download,
                     contentDescription = stringResource(R.string.download))

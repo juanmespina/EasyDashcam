@@ -301,6 +301,13 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun cancelDownload(uniqueId: Int) {
+        runCatching {
+            getApplication<Application>()
+                .startService(DownloadService.cancelIntent(getApplication(), uniqueId))
+        }
+    }
+
     /**
      * Pull a recording into [out] while it plays — progressive playback.
      * Same wire path as a download, so it serializes behind any in-flight
