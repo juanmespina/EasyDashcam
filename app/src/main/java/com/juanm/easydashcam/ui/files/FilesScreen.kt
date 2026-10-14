@@ -909,11 +909,15 @@ private fun PlayerDialog(
     }
     // The uri can be deleted between the query and the tap — fail into the
     // error state instead of crashing out of composition.
+    // The ParcelFileDescriptor must outlive the player: unreferenced, GC can
+    // finalize it mid-playback and close the fd the FileChannel reads on.
+    // AutoCloseInputStream owns it — closing the channel closes everything.
     val player = remember(uri, remote) {
         runCatching {
             when {
-                uri != null -> AviMjpegPlayer(java.io.FileInputStream(
-                    context.contentResolver.openFileDescriptor(uri, "r")!!.fileDescriptor).channel)
+                uri != null -> AviMjpegPlayer(
+                    android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                        context.contentResolver.openFileDescriptor(uri, "r")!!).channel)
                 tmpFile != null -> AviMjpegPlayer(java.io.FileInputStream(tmpFile).channel)
                 else -> null
             }
