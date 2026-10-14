@@ -28,6 +28,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -78,16 +79,17 @@ fun AppRoot(vm: CameraViewModel = viewModel()) {
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
-                title = { Text("Easy Dashcam") },
+                title = { Text(stringResource(R.string.app_name)) },
                 actions = {
                     Box {
                         IconButton(onClick = { menuOpen = true }) {
-                            Icon(Icons.Default.MoreVert, contentDescription = "Menu")
+                            Icon(Icons.Default.MoreVert,
+                                contentDescription = stringResource(R.string.menu_overflow))
                         }
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                             if (BuildConfig.DEBUG) {
                                 DropdownMenuItem(
-                                    text = { Text(Destinations.Debug.label) },
+                                    text = { Text(stringResource(Destinations.Debug.labelRes)) },
                                     onClick = {
                                         menuOpen = false
                                         nav.navigate(Destinations.Debug.route)
@@ -95,7 +97,7 @@ fun AppRoot(vm: CameraViewModel = viewModel()) {
                                 )
                             }
                             DropdownMenuItem(
-                                text = { Text("Disconnect") },
+                                text = { Text(stringResource(R.string.menu_disconnect)) },
                                 onClick = {
                                     menuOpen = false
                                     vm.disconnect()
@@ -118,8 +120,11 @@ fun AppRoot(vm: CameraViewModel = viewModel()) {
                                 restoreState = true
                             }
                         },
-                        icon = { Icon(dest.icon, contentDescription = dest.label) },
-                        label = { Text(dest.label) }
+                        icon = {
+                            Icon(dest.icon,
+                                contentDescription = stringResource(dest.labelRes))
+                        },
+                        label = { Text(stringResource(dest.labelRes)) }
                     )
                 }
             }

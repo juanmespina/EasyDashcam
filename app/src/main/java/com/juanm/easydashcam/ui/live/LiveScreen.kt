@@ -37,12 +37,14 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import com.juanm.easydashcam.R
 import com.juanm.easydashcam.core.net.RtspMjpegClient
 import com.juanm.easydashcam.ui.camera.CameraViewModel
 import com.juanm.easydashcam.ui.components.ConnectionGate
@@ -84,6 +86,8 @@ private fun LivePlayer(
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val snapshotSavedMsg = stringResource(R.string.snapshot_saved)
+    val snapshotFailedMsg = stringResource(R.string.snapshot_failed)
 
     // A mounted dashcam-view phone must not sleep while streaming.
     val view = LocalView.current
@@ -134,7 +138,7 @@ private fun LivePlayer(
         frame?.let {
             Image(
                 bitmap = it.asImageBitmap(),
-                contentDescription = "Live preview",
+                contentDescription = stringResource(R.string.live_preview),
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize()
             )
@@ -146,18 +150,18 @@ private fun LivePlayer(
             ) {
                 CircularProgressIndicator()
                 Text(
-                    "Waiting for stream…",
+                    stringResource(R.string.waiting_stream),
                     color = Color.White,
                     modifier = Modifier.padding(top = 12.dp)
                 )
             }
             is Status.Error -> Text(
-                "Stream error: ${s.msg}",
+                stringResource(R.string.stream_error, s.msg),
                 color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.align(Alignment.Center).padding(16.dp)
             )
             Status.Ended -> Text(
-                "Stream ended",
+                stringResource(R.string.stream_ended),
                 color = Color.White,
                 modifier = Modifier.align(Alignment.Center).padding(16.dp)
             )
@@ -171,7 +175,8 @@ private fun LivePlayer(
                     Icon(
                         if (muted) Icons.AutoMirrored.Filled.VolumeOff
                         else Icons.AutoMirrored.Filled.VolumeUp,
-                        contentDescription = if (muted) "Unmute" else "Mute",
+                        contentDescription = stringResource(
+                            if (muted) R.string.unmute else R.string.mute),
                         tint = Color.White
                     )
                 }
@@ -179,13 +184,13 @@ private fun LivePlayer(
                     frame?.let { bmp ->
                         scope.launch {
                             val ok = withContext(Dispatchers.IO) { saveSnapshot(context, bmp) }
-                            onNotice(if (ok) "Snapshot saved to Pictures" else "Snapshot failed")
+                            onNotice(if (ok) snapshotSavedMsg else snapshotFailedMsg)
                         }
                     }
                 }) {
                     Icon(
                         Icons.Default.PhotoCamera,
-                        contentDescription = "Save snapshot",
+                        contentDescription = stringResource(R.string.save_snapshot),
                         tint = Color.White
                     )
                 }
@@ -193,7 +198,7 @@ private fun LivePlayer(
         }
         if (transferActive) {
             Text(
-                "Download in progress — preview may pause",
+                stringResource(R.string.download_in_progress),
                 color = Color.White,
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier

@@ -11,6 +11,7 @@ import android.os.Environment
 import android.os.StatFs
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.StringRes
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -79,6 +80,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -90,6 +92,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -97,6 +100,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.juanm.easydashcam.R
 import com.juanm.easydashcam.core.media.AviMjpegPlayer
 import com.juanm.easydashcam.core.net.GpsocketClient
 import com.juanm.easydashcam.core.session.CameraSession
@@ -180,7 +184,7 @@ private fun FilesList(vm: CameraViewModel) {
                     selected = filter == f,
                     onClick = { filter = f },
                     shape = SegmentedButtonDefaults.itemShape(i, MediaFilter.entries.size)
-                ) { Text(f.label) }
+                ) { Text(stringResource(f.labelRes)) }
             }
         }
         // Locked (L) records can't be served — the camera feff-refuses their
@@ -234,8 +238,8 @@ private fun FilesList(vm: CameraViewModel) {
         ) {
             if (pending.isNotEmpty()) {
                 TextButton(onClick = startBatch) {
-                    Text("Download all (${pending.size} · %.0f MB)"
-                        .format(pending.sumOf { it.size } / 1024f))
+                    Text(stringResource(R.string.download_all,
+                        pending.size, pending.sumOf { it.size } / 1024f))
                 }
             }
             if (dayFilter != null) {
@@ -247,21 +251,23 @@ private fun FilesList(vm: CameraViewModel) {
                             DateTimeFormatter.ofPattern("MMM d", Locale.getDefault())))
                     },
                     trailingIcon = {
-                        Icon(Icons.Default.Close, contentDescription = "Clear filter",
+                        Icon(Icons.Default.Close,
+                            contentDescription = stringResource(R.string.clear_filter),
                             modifier = Modifier.size(16.dp))
                     }
                 )
             }
             Box {
                 IconButton(onClick = { filterMenu = true }) {
-                    Icon(Icons.Default.FilterAlt, contentDescription = "Filter by date")
+                    Icon(Icons.Default.FilterAlt,
+                        contentDescription = stringResource(R.string.filter_by_date))
                 }
                 DropdownMenu(expanded = filterMenu, onDismissRequest = { filterMenu = false }) {
                     val today = LocalDate.now()
                     listOf(
-                        "All dates" to null,
-                        "Today" to today,
-                        "Yesterday" to today.minusDays(1)
+                        stringResource(R.string.date_all) to null,
+                        stringResource(R.string.date_today) to today,
+                        stringResource(R.string.date_yesterday) to today.minusDays(1)
                     ).forEach { (label, day) ->
                         DropdownMenuItem(
                             text = { Text(label + if (day == dayFilter) " ✓" else "") },
@@ -269,19 +275,23 @@ private fun FilesList(vm: CameraViewModel) {
                         )
                     }
                     DropdownMenuItem(
-                        text = { Text("Pick a date…") },
+                        text = { Text(stringResource(R.string.date_pick)) },
                         onClick = { pickDay = true; filterMenu = false }
                     )
                 }
             }
             Box {
                 IconButton(onClick = { sortMenu = true }) {
-                    Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "Sort")
+                    Icon(Icons.AutoMirrored.Filled.Sort,
+                        contentDescription = stringResource(R.string.sort))
                 }
                 DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
                     SortMode.entries.forEach { mode ->
                         DropdownMenuItem(
-                            text = { Text(mode.label + if (mode == sortMode) " ✓" else "") },
+                            text = {
+                                Text(stringResource(mode.labelRes) +
+                                    if (mode == sortMode) " ✓" else "")
+                            },
                             onClick = { sortMode = mode; sortMenu = false }
                         )
                     }
@@ -291,8 +301,8 @@ private fun FilesList(vm: CameraViewModel) {
             IconButton(onClick = vm::toggleAutoDownload) {
                 Icon(
                     if (autoDl) Icons.Default.Sync else Icons.Default.SyncDisabled,
-                    contentDescription = if (autoDl)
-                        "Auto-download on — tap to disable" else "Auto-download new clips",
+                    contentDescription = stringResource(
+                        if (autoDl) R.string.auto_download_on else R.string.auto_download_off),
                     tint = if (autoDl) MaterialTheme.colorScheme.primary
                            else androidx.compose.material3.LocalContentColor.current
                 )
@@ -304,7 +314,8 @@ private fun FilesList(vm: CameraViewModel) {
                         ViewMode.GRID -> Icons.Default.GridView
                         ViewMode.TIMELINE -> Icons.Default.Timeline
                     },
-                    contentDescription = "${viewMode.label} — tap to switch"
+                    contentDescription = stringResource(R.string.view_mode_switch,
+                        stringResource(viewMode.labelRes))
                 )
             }
         }
@@ -317,11 +328,11 @@ private fun FilesList(vm: CameraViewModel) {
             // PullToRefreshBox already shows its indicator while loading —
             // a second centered spinner made tab switches flash twice.
             list == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                if (!loading) Text("Pull down to refresh")
+                if (!loading) Text(stringResource(R.string.pull_to_refresh))
             }
             list.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(if (files.isNullOrEmpty()) "No recordings on the camera"
-                     else "Nothing matches this filter")
+                Text(stringResource(if (files.isNullOrEmpty()) R.string.no_recordings
+                     else R.string.nothing_matches))
             }
             else -> {
                 // Days always run newest-first; the sort option orders within
@@ -436,9 +447,13 @@ private fun FilesList(vm: CameraViewModel) {
                             .atZone(java.time.ZoneOffset.UTC).toLocalDate()
                     }
                     pickDay = false
-                }) { Text("OK") }
+                }) { Text(stringResource(R.string.ok)) }
             },
-            dismissButton = { TextButton(onClick = { pickDay = false }) { Text("Cancel") } }
+            dismissButton = {
+                TextButton(onClick = { pickDay = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
         ) { DatePicker(state = dp) }
     }
     playing?.let { (uri, isImage) ->
@@ -455,24 +470,27 @@ private fun FilesList(vm: CameraViewModel) {
             title = {
                 Text(f.timestamp?.format(
                     DateTimeFormatter.ofPattern("MMM d, HH:mm:ss", Locale.getDefault()))
-                    ?: "Downloaded file")
+                    ?: stringResource(R.string.downloaded_file))
             },
-            text = { Text("Local copy on this device") },
+            text = { Text(stringResource(R.string.local_copy)) },
             confirmButton = {
                 Row {
                     TextButton(onClick = {
                         playing = uri to (f.kindChar == 'J'); actionsFor = null
-                    }) { Text("Play") }
+                    }) { Text(stringResource(R.string.play)) }
                     TextButton(onClick = {
                         shareFile(context, uri, f.kindChar == 'J'); actionsFor = null
-                    }) { Text("Share") }
+                    }) { Text(stringResource(R.string.share)) }
                     TextButton(onClick = { vm.deleteLocal(uri); actionsFor = null }) {
-                        Text("Delete", color = MaterialTheme.colorScheme.error)
+                        Text(stringResource(R.string.delete),
+                            color = MaterialTheme.colorScheme.error)
                     }
                 }
             },
             dismissButton = {
-                TextButton(onClick = { actionsFor = null }) { Text("Cancel") }
+                TextButton(onClick = { actionsFor = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
             }
         )
     }
@@ -520,44 +538,58 @@ private fun shareFile(context: android.content.Context, uri: Uri, isImage: Boole
         putExtra(android.content.Intent.EXTRA_STREAM, shareUri)
         addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
-    context.startActivity(android.content.Intent.createChooser(send, "Share clip"))
+    context.startActivity(android.content.Intent.createChooser(
+        send, context.getString(R.string.share_clip)))
 }
 
-private enum class MediaFilter(val label: String) {
-    ALL("All"), VIDEOS("Videos"), PHOTOS("Photos"), ON_DEVICE("On device")
+private enum class MediaFilter(@param:StringRes val labelRes: Int) {
+    ALL(R.string.filter_all), VIDEOS(R.string.filter_videos),
+    PHOTOS(R.string.filter_photos), ON_DEVICE(R.string.filter_on_device)
 }
 
-private enum class ViewMode(val label: String) {
-    LIST("List"), GRID("Grid"), TIMELINE("Timeline");
+private enum class ViewMode(@param:StringRes val labelRes: Int) {
+    LIST(R.string.view_list), GRID(R.string.view_grid), TIMELINE(R.string.view_timeline);
     fun next() = entries[(ordinal + 1) % entries.size]
 }
 
-private enum class SortMode(val label: String, val comparator: Comparator<GpsocketClient.CameraFile>) {
-    NEWEST("Newest first", compareByDescending { it.timestamp }),
-    OLDEST("Oldest first", compareBy { it.timestamp }),
-    LARGEST("Largest first", compareByDescending { it.size }),
-    SMALLEST("Smallest first", compareBy { it.size })
+private enum class SortMode(
+    @param:StringRes val labelRes: Int,
+    val comparator: Comparator<GpsocketClient.CameraFile>
+) {
+    NEWEST(R.string.sort_newest, compareByDescending { it.timestamp }),
+    OLDEST(R.string.sort_oldest, compareBy { it.timestamp }),
+    LARGEST(R.string.sort_largest, compareByDescending { it.size }),
+    SMALLEST(R.string.sort_smallest, compareBy { it.size })
 }
 
 @Composable
 private fun DayHeader(day: LocalDate?) {
     Text(
-        day?.format(DateTimeFormatter.ofPattern("EEE, MMM d", Locale.getDefault())) ?: "Unknown date",
+        day?.format(DateTimeFormatter.ofPattern("EEE, MMM d", Locale.getDefault()))
+            ?: stringResource(R.string.unknown_date),
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp)
     )
 }
 
-private fun kindOf(f: GpsocketClient.CameraFile) = when (f.kindChar) {
-    'L' -> Icons.Default.Lock to "Locked"
-    'J' -> Icons.Default.Photo to "Photo"
-    'A' -> Icons.Default.Videocam to "Video"
+private fun kindIcon(f: GpsocketClient.CameraFile) = when (f.kindChar) {
+    'L' -> Icons.Default.Lock
+    'J' -> Icons.Default.Photo
     // Unknown kind letters (multi-channel cams may use them for rear/interior
     // feeds) stay visible instead of being silently labelled "Video".
-    else -> Icons.Default.Videocam to "Type ${f.kindChar}"
+    else -> Icons.Default.Videocam
 }
 
+@Composable
+private fun kindLabel(f: GpsocketClient.CameraFile) = when (f.kindChar) {
+    'L' -> stringResource(R.string.kind_locked)
+    'J' -> stringResource(R.string.kind_photo)
+    'A' -> stringResource(R.string.kind_video)
+    else -> stringResource(R.string.kind_other, f.kindChar)
+}
+
+@Composable
 private fun fileDetail(
     file: GpsocketClient.CameraFile,
     durationSec: Int?,
@@ -571,11 +603,16 @@ private fun fileDetail(
         kotlin.math.abs(java.time.Duration.between(it, java.time.LocalDateTime.now()).toMinutes()) < 3
     } == true
     return buildString {
-        append("%s · %.1f MB".format(kindOf(file).second, file.size / 1024f))
-        durationSec?.let { append(" · ~%dm %02ds".format(it / 60, it % 60)) }
-        download?.takeIf { !it.done }?.etaSec?.let { append(" · ~%ds left".format(it)) }
-        if (stillRecording) append(" · still recording?")
-        if (local) append(if (partial) " · partial" else " · downloaded")
+        append(stringResource(R.string.detail_base, kindLabel(file), file.size / 1024f))
+        durationSec?.let {
+            append(stringResource(R.string.detail_duration, it / 60, it % 60))
+        }
+        download?.takeIf { !it.done }?.etaSec?.let {
+            append(stringResource(R.string.detail_eta, it))
+        }
+        if (stillRecording) append(stringResource(R.string.detail_still_recording))
+        if (local) append(stringResource(
+            if (partial) R.string.detail_partial else R.string.detail_downloaded))
     }
 }
 
@@ -610,7 +647,7 @@ private fun TimelineRow(
         },
         headlineContent = {
             Text(file.timestamp?.format(DateTimeFormatter.ofPattern("HH:mm:ss"))
-                ?: "id 0x%04x".format(file.id))
+                ?: stringResource(R.string.id_fallback, file.id))
         },
         supportingContent = {
             Text(fileDetail(file, meta?.durationSec ?: durationSec, download,
@@ -634,8 +671,9 @@ private fun GapRow(gapSec: Long) {
     ) {
         HorizontalDivider(Modifier.weight(1f))
         Text(
-            if (gapSec >= 3600) "  ~%dh %02dm gap  ".format(gapSec / 3600, gapSec % 3600 / 60)
-            else "  ~%dm gap  ".format(gapSec / 60),
+            if (gapSec >= 3600)
+                stringResource(R.string.gap_hours, gapSec / 3600, gapSec % 3600 / 60)
+            else stringResource(R.string.gap_minutes, gapSec / 60),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -657,7 +695,8 @@ private fun rememberClipMeta(uri: Uri?): ClipMeta? {
 @Composable
 private fun LockedFooter(count: Int) {
     Text(
-        "$count protected clip(s) hidden — the camera refuses to serve locked files",
+        androidx.compose.ui.res.pluralStringResource(
+            R.plurals.locked_clips_hidden, count, count),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(16.dp)
@@ -675,7 +714,7 @@ private fun StorageFooter() {
     }
     if (free != null) {
         Text(
-            "%.1f GB free on device".format(free / 1_073_741_824.0),
+            stringResource(R.string.storage_free, free / 1_073_741_824.0),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
@@ -696,17 +735,19 @@ private fun FileRow(
     onStream: (() -> Unit)?,
     onLongPress: (() -> Unit)? = null,
 ) {
-    val (icon, kindLabel) = kindOf(file)
+    val icon = kindIcon(file)
+    val kindDesc = kindLabel(file)
     val meta = rememberClipMeta(localUri)
     ListItem(
         leadingContent = {
             meta?.thumb?.let {
-                Image(bitmap = it.asImageBitmap(), contentDescription = kindLabel,
+                Image(bitmap = it.asImageBitmap(), contentDescription = kindDesc,
                     contentScale = ContentScale.Crop, modifier = Modifier.size(48.dp))
-            } ?: Icon(icon, contentDescription = kindLabel)
+            } ?: Icon(icon, contentDescription = kindDesc)
         },
         headlineContent = {
-            Text(file.timestamp?.format(DateTimeFormatter.ofPattern("HH:mm:ss")) ?: "id 0x%04x".format(file.id))
+            Text(file.timestamp?.format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+                ?: stringResource(R.string.id_fallback, file.id))
         },
         supportingContent = {
             Text(fileDetail(file, meta?.durationSec ?: durationSec, download,
@@ -734,7 +775,8 @@ private fun FileTile(
     onStream: (() -> Unit)?,
     onLongPress: (() -> Unit)?,
 ) {
-    val (icon, kindLabel) = kindOf(file)
+    val icon = kindIcon(file)
+    val kindDesc = kindLabel(file)
     val meta = rememberClipMeta(localUri)
     Card(
         Modifier.padding(4.dp).then(
@@ -747,16 +789,16 @@ private fun FileTile(
     ) {
         Column {
             meta?.thumb?.let {
-                Image(bitmap = it.asImageBitmap(), contentDescription = kindLabel,
+                Image(bitmap = it.asImageBitmap(), contentDescription = kindDesc,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxWidth().height(110.dp))
             }
             Column(Modifier.padding(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(icon, contentDescription = kindLabel, modifier = Modifier.size(18.dp))
+                    Icon(icon, contentDescription = kindDesc, modifier = Modifier.size(18.dp))
                     Text(
                         file.timestamp?.format(DateTimeFormatter.ofPattern("HH:mm:ss"))
-                            ?: "id 0x%04x".format(file.id),
+                            ?: stringResource(R.string.id_fallback, file.id),
                         style = MaterialTheme.typography.titleSmall,
                         modifier = Modifier.padding(start = 6.dp)
                     )
@@ -789,7 +831,7 @@ private fun DownloadTrailing(
         if (onStream != null) IconButton(onClick = onStream) {
             Icon(
                 Icons.Default.PlayArrow,
-                contentDescription = "Stream without downloading",
+                contentDescription = stringResource(R.string.action_stream),
                 tint = MaterialTheme.colorScheme.secondary
             )
         }
@@ -797,7 +839,8 @@ private fun DownloadTrailing(
             download?.error != null -> IconButton(onClick = onDownload) {
                 Icon(
                     Icons.Default.ErrorOutline,
-                    contentDescription = "Failed: ${download.error} — tap to retry",
+                    contentDescription = stringResource(
+                        R.string.download_failed_retry, download.error ?: ""),
                     tint = MaterialTheme.colorScheme.error,
                     modifier = Modifier.size(20.dp)
                 )
@@ -805,13 +848,13 @@ private fun DownloadTrailing(
             onPlay != null -> IconButton(onClick = onPlay) {
                 Icon(
                     Icons.Default.PlayArrow,
-                    contentDescription = "Play downloaded file",
+                    contentDescription = stringResource(R.string.play_downloaded),
                     tint = MaterialTheme.colorScheme.primary
                 )
             }
             download?.done == true || local -> Icon(
                 Icons.Default.CheckCircle,
-                contentDescription = "Downloaded",
+                contentDescription = stringResource(R.string.downloaded),
                 tint = MaterialTheme.colorScheme.primary
             )
             download != null && download.total > 0 -> Box(contentAlignment = Alignment.Center) {
@@ -822,7 +865,8 @@ private fun DownloadTrailing(
             }
             download != null -> CircularProgressIndicator(modifier = Modifier.size(28.dp))
             else -> IconButton(onClick = onDownload) {
-                Icon(Icons.Default.Download, contentDescription = "Download")
+                Icon(Icons.Default.Download,
+                    contentDescription = stringResource(R.string.download))
             }
         }
     }
@@ -849,8 +893,8 @@ private fun PlayerDialog(
     var paused by remember(uri, remote) { mutableStateOf(false) }
     var indexed by remember(uri, remote) { mutableStateOf(false) }
     var buffering by remember(uri, remote) { mutableStateOf(false) }
-    var streamGot by remember(uri, remote) { mutableStateOf(0L) }
-    var streamTotal by remember(uri, remote) { mutableStateOf(0L) }
+    var streamGot by remember(uri, remote) { mutableLongStateOf(0L) }
+    var streamTotal by remember(uri, remote) { mutableLongStateOf(0L) }
     var streamDone by remember(uri, remote) { mutableStateOf(remote == null) }
     var indexedFrames by remember(uri, remote) { mutableIntStateOf(0) }
     var saved by remember(uri, remote) { mutableStateOf(false) }
@@ -879,7 +923,9 @@ private fun PlayerDialog(
     DisposableEffect(player) { onDispose { player?.close(); tmpFile?.delete() } }
 
     LaunchedEffect(player) {
-        if (player == null) { error = "file unavailable"; return@LaunchedEffect }
+        if (player == null) {
+            error = context.getString(R.string.err_file_unavailable); return@LaunchedEffect
+        }
         try {
             var fetchErr: String? = null
             if (remote != null) {
@@ -897,9 +943,9 @@ private fun PlayerDialog(
                             }) {
                                 is GpsocketClient.DownloadResult.Success -> {}
                                 is GpsocketClient.DownloadResult.Refused ->
-                                    fetchErr = "camera refused — it may still be recording"
+                                    fetchErr = context.getString(R.string.err_camera_refused)
                                 is GpsocketClient.DownloadResult.Incomplete ->
-                                    fetchErr = "transfer stopped early"
+                                    fetchErr = context.getString(R.string.err_transfer_stopped)
                                 is GpsocketClient.DownloadResult.Failed ->
                                     fetchErr = r.reason
                             }
@@ -926,7 +972,7 @@ private fun PlayerDialog(
             }
             fetchErr?.let { error = it; return@LaunchedEffect }
             if (player.frames.isEmpty()) {
-                error = "no video frames"; return@LaunchedEffect
+                error = context.getString(R.string.err_no_video_frames); return@LaunchedEffect
             }
             indexedFrames = player.frames.size
             indexed = true
@@ -1028,13 +1074,13 @@ private fun PlayerDialog(
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             when {
                 error != null -> Text(
-                    "Cannot play: $error",
+                    stringResource(R.string.cannot_play, error.orEmpty()),
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.align(Alignment.Center).padding(24.dp)
                 )
                 frame != null -> Image(
                     bitmap = frame!!.asImageBitmap(),
-                    contentDescription = "Playback",
+                    contentDescription = stringResource(R.string.playback),
                     contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize()
                 )
@@ -1043,9 +1089,9 @@ private fun PlayerDialog(
             if (remote != null && (buffering || streamTotal > 0)) {
                 Text(
                     if (buffering && streamTotal > 0)
-                        "Buffering — %.0f%%".format(streamGot * 100f / streamTotal)
-                    else if (buffering) "Buffering…"
-                    else "Streaming — %.0f%%".format(streamGot * 100f / streamTotal),
+                        stringResource(R.string.buffering_pct, streamGot * 100f / streamTotal)
+                    else if (buffering) stringResource(R.string.buffering)
+                    else stringResource(R.string.streaming_pct, streamGot * 100f / streamTotal),
                     color = Color.White,
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.align(Alignment.TopStart)
@@ -1067,18 +1113,22 @@ private fun PlayerDialog(
                     }, enabled = !saved) {
                         Icon(
                             Icons.Default.Save,
-                            contentDescription = "Save to device",
+                            contentDescription = stringResource(R.string.save_to_device),
                             tint = if (saved) MaterialTheme.colorScheme.primary else Color.White
                         )
                     }
                 }
                 if (uri != null) {
                     IconButton(onClick = { shareFile(context, uri, isImage) }) {
-                        Icon(Icons.Default.Share, contentDescription = "Share", tint = Color.White)
+                        Icon(Icons.Default.Share,
+                            contentDescription = stringResource(R.string.share),
+                            tint = Color.White)
                     }
                 }
                 IconButton(onClick = onClose) {
-                    Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+                    Icon(Icons.Default.Close,
+                        contentDescription = stringResource(R.string.close),
+                        tint = Color.White)
                 }
             }
             val pl = player
@@ -1099,7 +1149,9 @@ private fun PlayerDialog(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         IconButton(onClick = { pos = (pos - skip).coerceAtLeast(0); paused = false }) {
-                            Icon(Icons.Default.Replay10, contentDescription = "Back 1 s", tint = Color.White)
+                            Icon(Icons.Default.Replay10,
+                                contentDescription = stringResource(R.string.back_1s),
+                                tint = Color.White)
                         }
                         IconButton(onClick = {
                             paused = !paused
@@ -1107,15 +1159,19 @@ private fun PlayerDialog(
                         }) {
                             Icon(
                                 if (paused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                                contentDescription = if (paused) "Play" else "Pause",
+                                contentDescription = stringResource(
+                                    if (paused) R.string.play else R.string.pause),
                                 tint = Color.White
                             )
                         }
                         IconButton(onClick = { pos = (pos + skip).coerceAtMost(count - 1); paused = false }) {
-                            Icon(Icons.Default.Forward10, contentDescription = "Forward 1 s", tint = Color.White)
+                            Icon(Icons.Default.Forward10,
+                                contentDescription = stringResource(R.string.forward_1s),
+                                tint = Color.White)
                         }
                         Text(
-                            "%.1f / %.1f s".format(pos * pl.frameMs / 1000.0,
+                            stringResource(R.string.player_position,
+                                pos * pl.frameMs / 1000.0,
                                 pl.probeDurationSec ?: pl.durationSec),
                             color = Color.White,
                             style = MaterialTheme.typography.bodySmall,

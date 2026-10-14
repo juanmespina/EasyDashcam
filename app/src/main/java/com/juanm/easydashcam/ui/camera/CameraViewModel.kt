@@ -9,6 +9,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.juanm.easydashcam.EasyDashcamApp
+import com.juanm.easydashcam.R
 import com.juanm.easydashcam.core.download.ClipStore
 import com.juanm.easydashcam.core.download.DownloadService
 import com.juanm.easydashcam.core.net.GpsocketClient
@@ -213,7 +214,8 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             if (!session.connect()) {
                 _state.value = GpsocketClient.State.Error(
-                    IllegalStateException("No Wi-Fi network — join the camera hotspot first.")
+                    IllegalStateException(
+                        getApplication<Application>().getString(R.string.err_no_wifi))
                 )
             }
         }
@@ -247,7 +249,10 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                     persistFiles(sorted)
                     if (session.autoDownload.value) autoEnqueueNew(it)
                 }
-                .onFailure { notice("file list failed: ${it.message}") }
+                .onFailure {
+                    notice(getApplication<Application>()
+                        .getString(R.string.notice_file_list_failed, it.message))
+                }
             _filesLoading.value = false
         }
     }
@@ -258,7 +263,8 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             val rows = runCatching {
                 getApplication<Application>().contentResolver.delete(uri, null, null)
             }.getOrDefault(0)
-            notice(if (rows > 0) "Deleted from device" else "Delete failed")
+            notice(getApplication<Application>().getString(
+                if (rows > 0) R.string.notice_deleted else R.string.notice_delete_failed))
             refreshLocalFiles()
         }
     }
@@ -328,7 +334,8 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         if (fresh.isEmpty()) return
         fresh.forEach(::download)
         session.autoSyncWatermark = fresh.last().timestamp
-        notice("Auto-downloading ${fresh.size} new clip(s)")
+        notice(getApplication<Application>().resources.getQuantityString(
+            R.plurals.notice_auto_download, fresh.size, fresh.size))
     }
 
     // ---- Settings -----------------------------------------------------------
@@ -350,7 +357,10 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 _settings.value = cats
                 _settingValues.value = values
                 settingsLoadedAt = System.currentTimeMillis()
-            }.onFailure { notice("settings failed: ${it.message}") }
+            }.onFailure {
+                notice(getApplication<Application>()
+                    .getString(R.string.notice_settings_failed, it.message))
+            }
             _settingsLoading.value = false
         }
     }
@@ -360,7 +370,8 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         _settingValues.update { it + (id to byteArrayOf(value.toByte())) }
         viewModelScope.launch {
             if (!client.setParam(id, value)) {
-                notice("setting 0x%04x rejected".format(id))
+                notice(getApplication<Application>()
+                    .getString(R.string.notice_setting_rejected, id))
                 if (prev != null) _settingValues.update { it + (id to prev) }
             }
         }

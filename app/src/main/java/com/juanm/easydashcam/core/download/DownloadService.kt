@@ -12,6 +12,7 @@ import android.os.PowerManager
 import com.juanm.easydashcam.core.DebugLogger
 import androidx.core.app.NotificationCompat
 import com.juanm.easydashcam.EasyDashcamApp
+import com.juanm.easydashcam.R
 import com.juanm.easydashcam.core.net.GpsocketClient
 import com.juanm.easydashcam.core.session.CameraSession
 import kotlinx.coroutines.CancellationException
@@ -75,10 +76,13 @@ class DownloadService : Service() {
         session = (application as EasyDashcamApp).session
         nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "Downloads", NotificationManager.IMPORTANCE_LOW)
+            NotificationChannel(CHANNEL_ID, getString(R.string.channel_downloads),
+                NotificationManager.IMPORTANCE_LOW)
         )
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_RESULT_ID, "Download results", NotificationManager.IMPORTANCE_DEFAULT)
+            NotificationChannel(CHANNEL_RESULT_ID,
+                getString(R.string.channel_download_results),
+                NotificationManager.IMPORTANCE_DEFAULT)
         )
     }
 
@@ -106,7 +110,7 @@ class DownloadService : Service() {
     private fun ensureWorker() {
         if (worker) return
         worker = true
-        startForeground(NOTIF_ID, notification("Preparing download…"))
+        startForeground(NOTIF_ID, notification(getString(R.string.notif_preparing)))
         val pm = getSystemService(PowerManager::class.java)
         @Suppress("DEPRECATION") // partial wake lock is still the right tool for a socket transfer
         val wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "easydashcam:download")
@@ -122,7 +126,10 @@ class DownloadService : Service() {
                     val f = kotlinx.coroutines.withTimeoutOrNull(IDLE_SHUTDOWN_MS) {
                         queue.receive()
                     } ?: break
-                    if (f.uniqueId in cancelled) { finishFile(f.uniqueId, error = "cancelled"); continue }
+                    if (f.uniqueId in cancelled) {
+                        finishFile(f.uniqueId, error = getString(R.string.dl_err_cancelled))
+                        continue
+                    }
                     downloadOne(f)
                 }
             } finally {
@@ -138,7 +145,9 @@ class DownloadService : Service() {
 
     private suspend fun downloadOne(f: GpsocketClient.CameraFile) {
         val dest = ClipStore.open(this, f)
-        if (dest == null) { finishFile(f.uniqueId, error = "no destination"); return }
+        if (dest == null) {
+            finishFile(f.uniqueId, error = getString(R.string.dl_err_no_dest)); return
+        }
         val label = dest.label
         val out = dest.out
 
@@ -176,9 +185,10 @@ class DownloadService : Service() {
                         session.updateDownload(f.uniqueId,
                             CameraSession.DownloadState(got, total, etaSec = eta))
                         nm.notify(NOTIF_ID, notification(
-                            "$label — ${got / 1024}/${total / 1024} KiB" +
-                                (eta?.let { e -> ", ~$e s left" } ?: "") +
-                                " · file ${finished + 1}/$enqueued", f.uniqueId))
+                            getString(R.string.notif_progress, label, got / 1024, total / 1024) +
+                                (eta?.let { e -> getString(R.string.notif_eta, e) } ?: "") +
+                                getString(R.string.notif_file_n, finished + 1, enqueued),
+                            f.uniqueId))
                     }
                 }
             }
@@ -196,9 +206,10 @@ class DownloadService : Service() {
             }
             is GpsocketClient.DownloadResult.Refused ->
                 // feff most often means the camera is still writing this record
-                failFile(dest, f.uniqueId, "camera refused (still recording?)")
+                failFile(dest, f.uniqueId, getString(R.string.dl_err_refused))
             is GpsocketClient.DownloadResult.Incomplete ->
-                failFile(dest, f.uniqueId, "stalled at ${result.bytes}/${result.expected} B")
+                failFile(dest, f.uniqueId,
+                    getString(R.string.dl_err_stalled, result.bytes, result.expected))
             is GpsocketClient.DownloadResult.Failed ->
                 failFile(dest, f.uniqueId, result.reason)
         }
@@ -213,8 +224,9 @@ class DownloadService : Service() {
         // Result goes on a separate id + channel — the foreground notification
         // is removed with the service and would take the result with it.
         nm.notify(NOTIF_RESULT_ID, NotificationCompat.Builder(this, CHANNEL_RESULT_ID)
-            .setContentTitle("Easy Dashcam")
-            .setContentText(if (error == null) "Download complete" else "Download failed: $error")
+            .setContentTitle(getString(R.string.app_name))
+            .setContentText(if (error == null) getString(R.string.notif_download_complete)
+                else getString(R.string.notif_download_failed, error))
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setContentIntent(openAppIntent())
             .setAutoCancel(true)
@@ -234,13 +246,13 @@ class DownloadService : Service() {
 
     private fun notification(text: String, fileId: Int? = null): Notification {
         val b = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Easy Dashcam")
+            .setContentTitle(getString(R.string.app_name))
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentIntent(openAppIntent())
             .setOngoing(true)
         if (fileId != null) {
-            b.addAction(0, "Cancel", PendingIntent.getService(
+            b.addAction(0, getString(R.string.cancel), PendingIntent.getService(
                 this, fileId, cancelIntent(this, fileId), PendingIntent.FLAG_IMMUTABLE))
         }
         return b.build()

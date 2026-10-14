@@ -16,9 +16,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import com.juanm.easydashcam.R
 import com.juanm.easydashcam.core.DebugLogger
 import com.juanm.easydashcam.core.net.GpsocketClient
 
@@ -36,16 +38,27 @@ fun DebugScreen(
         val probing = state is GpsocketClient.State.Connected
         val context = LocalContext.current
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onMenu, enabled = probing) { Text("Menu XML") }
-            OutlinedButton(onClick = onFiles, enabled = probing) { Text("Files") }
-            OutlinedButton(onClick = onSettings, enabled = probing) { Text("Settings") }
-            OutlinedButton(onClick = onDownload, enabled = probing) { Text("Download") }
+            OutlinedButton(onClick = onMenu, enabled = probing) {
+                Text(stringResource(R.string.dbg_menu_xml))
+            }
+            OutlinedButton(onClick = onFiles, enabled = probing) {
+                Text(stringResource(R.string.dbg_files))
+            }
+            OutlinedButton(onClick = onSettings, enabled = probing) {
+                Text(stringResource(R.string.dbg_settings))
+            }
+            OutlinedButton(onClick = onDownload, enabled = probing) {
+                Text(stringResource(R.string.dbg_download))
+            }
             // The tablet's logd drops app logs — this file is the only
             // way to get field captures off the device without USB.
-            OutlinedButton(onClick = { shareLog(context) }) { Text("Share log") }
+            OutlinedButton(onClick = { shareLog(context) }) {
+                Text(stringResource(R.string.dbg_share_log))
+            }
         }
         Spacer(Modifier.height(16.dp))
-        Text("Camera frames", style = MaterialTheme.typography.labelLarge)
+        Text(stringResource(R.string.dbg_camera_frames),
+            style = MaterialTheme.typography.labelLarge)
         Spacer(Modifier.height(8.dp))
         LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
             items(frameLog) { line ->
@@ -71,5 +84,6 @@ private fun shareLog(context: android.content.Context) {
         putExtra(android.content.Intent.EXTRA_STREAM, uri)
         addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
-    context.startActivity(android.content.Intent.createChooser(send, "Share debug log"))
+    context.startActivity(android.content.Intent.createChooser(
+        send, context.getString(R.string.dbg_share_title)))
 }

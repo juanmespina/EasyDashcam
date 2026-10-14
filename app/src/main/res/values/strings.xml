@@ -1,4 +1,161 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Easy Dashcam</string>
+
+    <!-- Navigation -->
+    <string name="nav_live">Live</string>
+    <string name="nav_files">Files</string>
+    <string name="nav_settings">Settings</string>
+    <string name="nav_debug">Debug log</string>
+    <string name="menu_overflow">Menu</string>
+    <string name="menu_disconnect">Disconnect</string>
+
+    <!-- Connection -->
+    <string name="connect">Connect</string>
+    <string name="connecting">Connecting to camera…</string>
+    <string name="connection_error">Error: %1$s</string>
+    <string name="join_hotspot">Join the camera Wi-Fi hotspot, then connect</string>
+    <string name="open_wifi_settings">Open Wi-Fi settings</string>
+    <string name="err_no_wifi">No Wi-Fi network — join the camera hotspot first.</string>
+
+    <!-- Files: filters and toolbar -->
+    <string name="filter_all">All</string>
+    <string name="filter_videos">Videos</string>
+    <string name="filter_photos">Photos</string>
+    <string name="filter_on_device">On device</string>
+    <string name="download_all">Download all (%1$d · %2$.0f MB)</string>
+    <string name="filter_by_date">Filter by date</string>
+    <string name="date_all">All dates</string>
+    <string name="date_today">Today</string>
+    <string name="date_yesterday">Yesterday</string>
+    <string name="date_pick">Pick a date…</string>
+    <string name="clear_filter">Clear filter</string>
+    <string name="sort">Sort</string>
+    <string name="sort_newest">Newest first</string>
+    <string name="sort_oldest">Oldest first</string>
+    <string name="sort_largest">Largest first</string>
+    <string name="sort_smallest">Smallest first</string>
+    <string name="auto_download_off">Auto-download new clips</string>
+    <string name="auto_download_on">Auto-download on — tap to disable</string>
+    <string name="view_mode_switch">%1$s — tap to switch</string>
+    <string name="view_list">List</string>
+    <string name="view_grid">Grid</string>
+    <string name="view_timeline">Timeline</string>
+
+    <!-- Files: list states and row details -->
+    <string name="pull_to_refresh">Pull down to refresh</string>
+    <string name="no_recordings">No recordings on the camera</string>
+    <string name="nothing_matches">Nothing matches this filter</string>
+    <string name="unknown_date">Unknown date</string>
+    <string name="id_fallback">id 0x%1$04x</string>
+    <string name="kind_locked">Locked</string>
+    <string name="kind_photo">Photo</string>
+    <string name="kind_video">Video</string>
+    <string name="kind_other">Type %1$c</string>
+    <string name="detail_base">%1$s · %2$.1f MB</string>
+    <string name="detail_duration"> · ~%1$dm %2$02ds</string>
+    <string name="detail_eta"> · ~%1$ds left</string>
+    <string name="detail_still_recording"> · still recording?</string>
+    <string name="detail_downloaded"> · downloaded</string>
+    <string name="detail_partial"> · partial</string>
+    <string name="gap_hours">"  ~%1$dh %2$02dm gap  "</string>
+    <string name="gap_minutes">"  ~%1$dm gap  "</string>
+    <plurals name="locked_clips_hidden">
+        <item quantity="one">%1$d protected clip hidden — the camera refuses to serve locked files</item>
+        <item quantity="other">%1$d protected clips hidden — the camera refuses to serve locked files</item>
+    </plurals>
+    <string name="storage_free">%1$.1f GB free on device</string>
+
+    <!-- Files: actions -->
+    <string name="action_stream">Stream without downloading</string>
+    <string name="download">Download</string>
+    <string name="downloaded">Downloaded</string>
+    <string name="download_failed_retry">Failed: %1$s — tap to retry</string>
+    <string name="play_downloaded">Play downloaded file</string>
+    <string name="downloaded_file">Downloaded file</string>
+    <string name="local_copy">Local copy on this device</string>
+    <string name="play">Play</string>
+    <string name="pause">Pause</string>
+    <string name="share">Share</string>
+    <string name="share_clip">Share clip</string>
+    <string name="delete">Delete</string>
+    <string name="cancel">Cancel</string>
+    <string name="ok">OK</string>
+
+    <!-- Player -->
+    <string name="cannot_play">Cannot play: %1$s</string>
+    <string name="playback">Playback</string>
+    <string name="save_to_device">Save to device</string>
+    <string name="close">Close</string>
+    <string name="back_1s">Back 1 s</string>
+    <string name="forward_1s">Forward 1 s</string>
+    <string name="buffering_pct">Buffering — %1$.0f%%</string>
+    <string name="buffering">Buffering…</string>
+    <string name="streaming_pct">Streaming — %1$.0f%%</string>
+    <string name="player_position">%1$.1f / %2$.1f s</string>
+    <string name="err_file_unavailable">file unavailable</string>
+    <string name="err_camera_refused">camera refused — it may still be recording</string>
+    <string name="err_transfer_stopped">transfer stopped early</string>
+    <string name="err_no_video_frames">no video frames</string>
+
+    <!-- Live -->
+    <string name="live_preview">Live preview</string>
+    <string name="waiting_stream">Waiting for stream…</string>
+    <string name="stream_error">Stream error: %1$s</string>
+    <string name="stream_ended">Stream ended</string>
+    <string name="mute">Mute</string>
+    <string name="unmute">Unmute</string>
+    <string name="save_snapshot">Save snapshot</string>
+    <string name="snapshot_saved">Snapshot saved to Pictures</string>
+    <string name="snapshot_failed">Snapshot failed</string>
+    <string name="download_in_progress">Download in progress — preview may pause</string>
+
+    <!-- Settings -->
+    <string name="no_settings">No settings available</string>
+    <string name="about_version">v%1$s · local-only, no accounts</string>
+    <string name="setdesc_0000">Video quality. Higher resolution = sharper plates and signs, bigger files.</string>
+    <string name="setdesc_0003">Length of each loop file. When the card fills up, the oldest clip is overwritten.</string>
+    <string name="setdesc_0004">Wide Dynamic Range — balances bright sky against dark shadows, e.g. exiting a tunnel.</string>
+    <string name="setdesc_0005">Include microphone audio in recordings.</string>
+    <string name="setdesc_0100">Still photo size in megapixels.</string>
+    <string name="setdesc_0101">Manual brightness. Raise for dark scenes, lower if the sky is blown out.</string>
+    <string name="setdesc_0108">Color temperature for the lighting conditions; Auto is fine for most drives.</string>
+    <string name="setdesc_0200">Mains frequency for your region (50 Hz Europe, 60 Hz Americas). The wrong value makes streetlights and dashboards flicker in video.</string>
+    <string name="setdesc_0201">How long the camera\'s LCD stays on before turning itself off.</string>
+    <string name="setdesc_0205">Order of the date stamp burned into recordings.</string>
+    <string name="setdesc_0209">Camera firmware version.</string>
+
+    <!-- Debug -->
+    <string name="dbg_menu_xml">Menu XML</string>
+    <string name="dbg_files">Files</string>
+    <string name="dbg_settings">Settings</string>
+    <string name="dbg_download">Download</string>
+    <string name="dbg_share_log">Share log</string>
+    <string name="dbg_camera_frames">Camera frames</string>
+    <string name="dbg_share_title">Share debug log</string>
+
+    <!-- Download service / notifications -->
+    <string name="channel_downloads">Downloads</string>
+    <string name="channel_download_results">Download results</string>
+    <string name="notif_preparing">Preparing download…</string>
+    <string name="notif_progress">%1$s — %2$d/%3$d KiB</string>
+    <string name="notif_eta">, ~%1$d s left</string>
+    <string name="notif_file_n"> · file %1$d/%2$d</string>
+    <string name="notif_download_complete">Download complete</string>
+    <string name="notif_download_failed">Download failed: %1$s</string>
+    <string name="dl_err_no_dest">no destination</string>
+    <string name="dl_err_cancelled">cancelled</string>
+    <string name="dl_err_refused">camera refused (still recording?)</string>
+    <string name="dl_err_stalled">stalled at %1$d/%2$d B</string>
+
+    <!-- ViewModel notices -->
+    <string name="notice_file_list_failed">file list failed: %1$s</string>
+    <string name="notice_deleted">Deleted from device</string>
+    <string name="notice_delete_failed">Delete failed</string>
+    <plurals name="notice_auto_download">
+        <item quantity="one">Auto-downloading %1$d new clip</item>
+        <item quantity="other">Auto-downloading %1$d new clips</item>
+    </plurals>
+    <string name="notice_settings_failed">settings failed: %1$s</string>
+    <string name="notice_setting_rejected">setting rejected: 0x%1$04x</string>
 </resources>

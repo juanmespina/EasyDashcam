@@ -24,8 +24,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.juanm.easydashcam.R
 import com.juanm.easydashcam.core.settings.CameraSetting
 import com.juanm.easydashcam.core.settings.SETTING_DESCRIPTIONS
 import com.juanm.easydashcam.ui.camera.CameraViewModel
@@ -60,7 +62,7 @@ private fun SettingsList(vm: CameraViewModel) {
                 CircularProgressIndicator()
             }
             cats.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No settings available")
+                Text(stringResource(R.string.no_settings))
             }
             else -> LazyColumn(Modifier.fillMaxSize()) {
                 cats.forEach { cat ->
@@ -86,9 +88,10 @@ private fun SettingsList(vm: CameraViewModel) {
                 }
                 item(key = "about") {
                     ListItem(
-                        headlineContent = { Text("Easy Dashcam") },
+                        headlineContent = { Text(stringResource(R.string.app_name)) },
                         supportingContent = {
-                            Text("v${com.juanm.easydashcam.BuildConfig.VERSION_NAME} · local-only, no accounts")
+                            Text(stringResource(R.string.about_version,
+                                com.juanm.easydashcam.BuildConfig.VERSION_NAME))
                         }
                     )
                 }
@@ -102,7 +105,7 @@ private fun SettingRow(setting: CameraSetting, raw: ByteArray?, onChange: (Int) 
     val value = raw?.firstOrNull()?.toInt()?.and(0xFF)
     val desc = SETTING_DESCRIPTIONS[setting.id]
     val supporting: (@Composable () -> Unit)? = desc?.let { d ->
-        { Text(d, style = MaterialTheme.typography.bodySmall) }
+        { Text(stringResource(d), style = MaterialTheme.typography.bodySmall) }
     }
     when {
         setting.isToggle -> {

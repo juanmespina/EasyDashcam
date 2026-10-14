@@ -17,8 +17,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.juanm.easydashcam.R
 import com.juanm.easydashcam.core.net.GpsocketClient
 
 /**
@@ -49,10 +51,12 @@ fun ConnectionGate(
             ) {
                 Text(
                     when (state) {
-                        is GpsocketClient.State.Connecting -> "Connecting to camera…"
-                        is GpsocketClient.State.Error ->
-                            "Error: ${state.cause.message ?: state.cause.javaClass.simpleName}"
-                        else -> "Join the camera Wi-Fi hotspot, then connect"
+                        is GpsocketClient.State.Connecting ->
+                            stringResource(R.string.connecting)
+                        is GpsocketClient.State.Error -> stringResource(
+                            R.string.connection_error,
+                            state.cause.message ?: state.cause.javaClass.simpleName)
+                        else -> stringResource(R.string.join_hotspot)
                     },
                     style = MaterialTheme.typography.bodyLarge,
                     textAlign = TextAlign.Center
@@ -61,13 +65,15 @@ fun ConnectionGate(
                     is GpsocketClient.State.Connecting -> CircularProgressIndicator()
                     else -> {
                         val context = LocalContext.current
-                        Button(onClick = onConnect) { Text("Connect") }
+                        Button(onClick = onConnect) {
+                            Text(stringResource(R.string.connect))
+                        }
                         OutlinedButton(onClick = {
                             // The system Wi-Fi panel (29+) doesn't leave the app.
                             val action = if (Build.VERSION.SDK_INT >= 29)
                                 Settings.Panel.ACTION_WIFI else Settings.ACTION_WIFI_SETTINGS
                             context.startActivity(Intent(action))
-                        }) { Text("Open Wi-Fi settings") }
+                        }) { Text(stringResource(R.string.open_wifi_settings)) }
                     }
                 }
             }
