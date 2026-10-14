@@ -63,10 +63,15 @@ class DownloadService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val queue = Channel<GpsocketClient.CameraFile>(Channel.UNLIMITED)
     private val cancelled = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
+    /** uniqueIds from enqueue until finishFile — rejects duplicate downloads. */
+    private val queuedIds = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
     private lateinit var session: CameraSession
     private lateinit var nm: NotificationManager
     // Written on main (onStartCommand) and reset by the IO worker.
     @Volatile private var worker = false
+    /** Latest delivered startId — stopSelfResult uses it so an intent
+     *  queued mid-shutdown keeps the service alive. */
+    private var lastStartId = 0
     // Queue counters for "file N of M" in the notification.
     @Volatile private var enqueued = 0
     @Volatile private var finished = 0
@@ -87,6 +92,7 @@ class DownloadService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        lastStartId = startId
         when (intent?.action) {
             ACTION_DOWNLOAD -> {
                 val f = GpsocketClient.CameraFile(
@@ -96,6 +102,13 @@ class DownloadService : Service() {
                         ?.let { runCatching { java.time.LocalDateTime.parse(it) }.getOrNull() },
                     size = intent.getLongExtra(EXTRA_SIZE, 0)
                 )
+                // A re-queue after cancel must clear the mark or the worker
+                // kills it again instantly — the set lived until process death.
+                cancelled -= f.uniqueId
+                // queuedIds lives from enqueue to finishFile — a second
+                // DOWNLOAD intent for an in-flight clip would write a
+                // duplicate MediaStore entry.
+                if (!queuedIds.add(f.uniqueId)) return START_STICKY
                 queue.trySend(f)
                 enqueued++
                 ensureWorker()
@@ -135,16 +148,30 @@ class DownloadService : Service() {
             } finally {
                 wakeLock.release()
             }
-            worker = false
-            enqueued = 0
-            finished = 0
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
+            // Shutdown decisions run on Main, where onStartCommand also runs —
+            // an enqueue racing the idle timeout can't slip between the queue
+            // check and stopSelfResult, which itself no-ops if a newer start
+            // request arrived.
+            kotlinx.coroutines.withContext(Dispatchers.Main.immediate) {
+                if (queue.isEmpty) {
+                    worker = false
+                    enqueued = 0
+                    finished = 0
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelfResult(lastStartId)
+                } else {
+                    worker = false
+                    ensureWorker()
+                }
+            }
         }
     }
 
     private suspend fun downloadOne(f: GpsocketClient.CameraFile) {
-        val dest = ClipStore.open(this, f)
+        // open() does a MediaStore insert — it can throw (full storage,
+        // revoked volume), and on this supervisor scope an uncaught
+        // exception crashes the app.
+        val dest = runCatching { ClipStore.open(this, f) }.getOrNull()
         if (dest == null) {
             finishFile(f.uniqueId, error = getString(R.string.dl_err_no_dest)); return
         }
@@ -193,7 +220,12 @@ class DownloadService : Service() {
                 }
             }
         } catch (_: CancellationException) {
-            failFile(dest, f.uniqueId, "cancelled")
+            failFile(dest, f.uniqueId, getString(R.string.dl_err_cancelled))
+            return
+        } catch (e: java.io.IOException) {
+            // Storage full / MediaStore stream broke mid-write — fail the
+            // file instead of crashing the app on this supervisor scope.
+            failFile(dest, f.uniqueId, e.message ?: e.javaClass.simpleName)
             return
         }
         when (result) {
@@ -217,6 +249,7 @@ class DownloadService : Service() {
 
     private fun finishFile(id: Int, error: String? = null) {
         finished++
+        queuedIds -= id
         val prev = session.downloads.value[id]
         session.updateDownload(
             id, CameraSession.DownloadState(prev?.received ?: 0, prev?.total ?: 0, done = true, error = error)
