@@ -89,6 +89,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -1011,6 +1015,16 @@ private fun PlayerDialog(
     }
 
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        // Immersive while the player is up — a swipe still reveals the bars.
+        val view = LocalView.current
+        DisposableEffect(Unit) {
+            val ctl = (context as? android.app.Activity)?.window
+                ?.let { WindowCompat.getInsetsController(it, view) }
+            ctl?.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            ctl?.hide(WindowInsetsCompat.Type.systemBars())
+            onDispose { ctl?.show(WindowInsetsCompat.Type.systemBars()) }
+        }
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             when {
                 error != null -> Text(
