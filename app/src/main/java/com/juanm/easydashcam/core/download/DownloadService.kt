@@ -43,6 +43,8 @@ class DownloadService : Service() {
         private const val NOTIF_ID = 1
         private const val NOTIF_RESULT_ID = 2
         private const val IDLE_SHUTDOWN_MS = 10_000L
+        private const val STALL_RETRIES = 2
+        private const val STALL_RETRY_DELAY_MS = 3_000L
 
         fun downloadIntent(context: Context, f: GpsocketClient.CameraFile) =
             Intent(context, DownloadService::class.java).apply {
@@ -168,12 +170,28 @@ class DownloadService : Service() {
     }
 
     private suspend fun downloadOne(f: GpsocketClient.CameraFile) {
+        // The protocol has no resume offset — 0x0503 always streams from
+        // byte 0 — so a stalled transfer can only be retried as a fresh
+        // full download. Two retries before surfacing the stall.
+        var attemptsLeft = STALL_RETRIES
+        while (true) {
+            if (downloadAttempt(f, lastAttempt = attemptsLeft <= 0)) return
+            if (f.uniqueId in cancelled) return
+            attemptsLeft--
+            kotlinx.coroutines.delay(STALL_RETRY_DELAY_MS)
+        }
+    }
+
+    /** One transfer attempt; true = terminal state reached. */
+    private suspend fun downloadAttempt(
+        f: GpsocketClient.CameraFile, lastAttempt: Boolean): Boolean {
         // open() does a MediaStore insert — it can throw (full storage,
         // revoked volume), and on this supervisor scope an uncaught
         // exception crashes the app.
         val dest = runCatching { ClipStore.open(this, f) }.getOrNull()
         if (dest == null) {
-            finishFile(f.uniqueId, error = getString(R.string.dl_err_no_dest)); return
+            finishFile(f.uniqueId, error = getString(R.string.dl_err_no_dest))
+            return true
         }
         val label = dest.label
         val out = dest.out
@@ -221,12 +239,12 @@ class DownloadService : Service() {
             }
         } catch (_: CancellationException) {
             failFile(dest, f.uniqueId, getString(R.string.dl_err_cancelled))
-            return
+            return true
         } catch (e: java.io.IOException) {
             // Storage full / MediaStore stream broke mid-write — fail the
             // file instead of crashing the app on this supervisor scope.
             failFile(dest, f.uniqueId, e.message ?: e.javaClass.simpleName)
-            return
+            return true
         }
         when (result) {
             is GpsocketClient.DownloadResult.Success -> {
@@ -237,19 +255,25 @@ class DownloadService : Service() {
                     .onFailure {
                         failFile(dest, f.uniqueId,
                             it.message ?: it.javaClass.simpleName)
-                        return
+                        return true
                     }
                 finishFile(f.uniqueId)
             }
             is GpsocketClient.DownloadResult.Refused ->
                 // feff most often means the camera is still writing this record
                 failFile(dest, f.uniqueId, getString(R.string.dl_err_refused))
-            is GpsocketClient.DownloadResult.Incomplete ->
-                failFile(dest, f.uniqueId,
-                    getString(R.string.dl_err_stalled, result.bytes, result.expected))
+            is GpsocketClient.DownloadResult.Incomplete -> {
+                // Retry needs a clean row — the partial MediaStore entry is
+                // dropped before the next attempt re-opens it.
+                ClipStore.fail(this, dest)
+                if (!lastAttempt && f.uniqueId !in cancelled) return false
+                finishFile(f.uniqueId,
+                    error = getString(R.string.dl_err_stalled, result.bytes, result.expected))
+            }
             is GpsocketClient.DownloadResult.Failed ->
                 failFile(dest, f.uniqueId, result.reason)
         }
+        return true
     }
 
     private fun finishFile(id: Int, error: String? = null) {
