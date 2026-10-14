@@ -105,7 +105,6 @@ import com.juanm.easydashcam.core.media.AviMjpegPlayer
 import com.juanm.easydashcam.core.net.GpsocketClient
 import com.juanm.easydashcam.core.session.CameraSession
 import com.juanm.easydashcam.ui.camera.CameraViewModel
-import com.juanm.easydashcam.ui.components.ConnectionGate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -115,13 +114,13 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-/** Files tab — recordings on the camera, with background downloads. */
+/** Files tab — recordings on the camera, with background downloads.
+ *  No ConnectionGate: the cached list and On device browsing stay usable
+ *  while disconnected; a failed fetch posts a notice and restores the
+ *  disk-cached list. */
 @Composable
 fun FilesScreen(vm: CameraViewModel) {
-    val state by vm.state.collectAsStateWithLifecycle()
-    ConnectionGate(state = state, onConnect = vm::connect) {
-        FilesList(vm)
-    }
+    FilesList(vm)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
