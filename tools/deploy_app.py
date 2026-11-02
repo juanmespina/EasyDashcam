@@ -1,22 +1,28 @@
 """One-command dev loop: build -> install -> launch (optionally --logcat)."""
 import glob
 import os
+import shutil
 import subprocess
 import sys
 
-ADB = 'C:/Users/juanm/AppData/Local/Android/Sdk/platform-tools/adb.exe'
-PROJ = ('c:/Users/juanm/OneDrive/Documents/GitHub/personal/CascadeProjects/'
-        'windsurf-project/EasyDashcam')
+PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ADB = (os.environ.get('ADB') or
+       os.path.join(os.environ.get('ANDROID_HOME',
+                    os.environ.get('ANDROID_SDK_ROOT', '')),
+                    'platform-tools', 'adb.exe'))
 APK = os.path.join(PROJ, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk')
 PKG = 'com.juanm.easydashcam'
 
 
 def find_gradle():
+    on_path = shutil.which('gradle')
+    if on_path:
+        return on_path
     pat = os.path.expandvars(
         r'%USERPROFILE%\.gradle\wrapper\dists\gradle-8.9-bin\*\gradle-8.9\bin\gradle.bat')
     hits = glob.glob(pat)
     if not hits:
-        sys.exit('Gradle 8.9 not found in ' + pat)
+        sys.exit('Gradle 8.9 not found — install it or add gradle to PATH')
     return hits[0]
 
 
@@ -31,7 +37,9 @@ def run(cmd, cwd=None, env=None, tail=2500, timeout=None):
 
 def build():
     env = dict(os.environ)
-    env['JAVA_HOME'] = r'C:\Program Files\Android\Android Studio\jbr'
+    jbr = r'C:\Program Files\Android\Android Studio\jbr'
+    if 'JAVA_HOME' not in env and os.path.isdir(jbr):
+        env['JAVA_HOME'] = jbr
     rc = run([find_gradle(), 'assembleDebug', '--console=plain'],
              cwd=PROJ, env=env, timeout=900)
     if rc != 0:
