@@ -25,7 +25,10 @@ Easy Dashcam talks directly to the camera on its own Wi-Fi hotspot — no accoun
 The external-server activity is a concern about unnecessary network communication, not proof that recordings were uploaded. Two sources back the concern:
 
 - **Our packet captures** (taken while the phone was connected to the camera's internet-less hotspot) show DNS lookups for `app-api.lufengzhe.com` — Viidure's own cloud API — plus `mshield.baidu.com`, `loc.map.baidu.com`, and `api.map.baidu.com`, and a live TLS session to a Baidu IP. The captures are not app-attributed and the TLS payloads were not decrypted.
+- **Its location permission** goes beyond what Android requires: any app joining a device Wi-Fi network needs location access, but Viidure also queries `loc.map.baidu.com` — Baidu's geolocation service — so the granted permission feeds a third-party location SDK, not just the Wi-Fi connection.
 - **Independent research** ([Brown Fine Security](https://brownfinesecurity.com/blog/police-bodycam-data-to-china), covered by [GBHackers](https://gbhackers.com/police-body-camera-apps/)) decrypted Viidure's traffic and found it posts device identifiers (IMEI, model, app version) to `app-api.lufengzhe.com` on a Huawei-hosted IP block, and that the app accepts forged TLS certificates.
+
+Easy Dashcam declares no location permission — its Wi-Fi access uses `NEARBY_WIFI_DEVICES` flagged `neverForLocation`, so it can never read your GPS.
 
 The packet-capture analysis used during development lives at `../docs/recon/` in the developer's workspace, outside this repository, and is not shipped here. Those notes describe camera communication, not a detailed audit of Viidure's external traffic.
 
