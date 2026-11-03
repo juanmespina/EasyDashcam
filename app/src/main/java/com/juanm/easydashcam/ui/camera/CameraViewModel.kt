@@ -389,15 +389,8 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
      *  before auto-download was enabled are intentionally left alone. */
     private fun autoEnqueueNew(files: List<GpsocketClient.CameraFile>) {
         val wm = session.autoSyncWatermark ?: return
-        val local = _localFiles.value
-        val dl = session.downloads.value
-        val fresh = files.filter {
-            it.kindChar != 'L' &&
-                it.timestamp != null &&
-                it.timestamp.isAfter(wm) &&
-                local[it.uniqueId] == null &&
-                dl[it.uniqueId] == null
-        }.sortedBy { it.timestamp }.take(10)
+        val known = _localFiles.value.keys + session.downloads.value.keys
+        val fresh = selectAutoDownloads(files, wm, known)
         if (fresh.isEmpty()) return
         fresh.forEach(::download)
         session.autoSyncWatermark = fresh.last().timestamp
@@ -571,4 +564,26 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     override fun onCleared() {
         // Session lives in the Application — do not tear the socket down here.
     }
+}
+
+/**
+ * Records auto-download should queue: servable, timestamped after [watermark],
+ * not already on the phone or queued ([known] uniqueIds), oldest first, at
+ * most [limit] — except that records sharing the last chosen timestamp all
+ * go together. The watermark moves to that timestamp and the next pass only
+ * takes records strictly after it, so cutting a photo+video pair in half
+ * would skip its other half forever.
+ */
+internal fun selectAutoDownloads(
+    files: List<GpsocketClient.CameraFile>,
+    watermark: java.time.LocalDateTime,
+    known: Set<Int>,
+    limit: Int = 10
+): List<GpsocketClient.CameraFile> {
+    val candidates = files
+        .filter { it.kindChar != 'L' && it.timestamp?.isAfter(watermark) == true && it.uniqueId !in known }
+        .sortedBy { it.timestamp }
+    if (candidates.size <= limit) return candidates
+    val cutAt = candidates[limit - 1].timestamp
+    return candidates.take(limit) + candidates.drop(limit).takeWhile { it.timestamp == cutAt }
 }
