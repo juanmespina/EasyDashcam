@@ -66,4 +66,22 @@ class ClipPlaybackTest {
         assertTrue(audioOutOfSync(audioMs = 3_000, videoMs = 1_000))
         assertTrue(audioOutOfSync(audioMs = 10_000, videoMs = 10_250))
     }
+
+    @Test
+    fun `video skips ahead to the audio clock after a slow decode`() {
+        // 75 ms frames; audio reached 1 s while frame 10 was decoding: frame 13
+        // (975-1050 ms) is already due.
+        assertEquals(13 to 0L, advanceVideo(pos = 10, frameMs = 75, audioClockMs = 1_000, decodeMs = 120))
+    }
+
+    @Test
+    fun `video advances one frame and waits the rest of the interval when audio is ahead by less than a frame`() {
+        assertEquals(11 to 25L, advanceVideo(pos = 10, frameMs = 75, audioClockMs = 800, decodeMs = 10))
+    }
+
+    @Test
+    fun `without audio video advances one frame minus the decode time`() {
+        assertEquals(11 to 45L, advanceVideo(pos = 10, frameMs = 75, audioClockMs = -1, decodeMs = 30))
+        assertEquals(11 to 0L, advanceVideo(pos = 10, frameMs = 75, audioClockMs = -1, decodeMs = 200))
+    }
 }

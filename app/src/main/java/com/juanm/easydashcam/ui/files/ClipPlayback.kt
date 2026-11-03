@@ -56,6 +56,10 @@ class ClipPlayback(
 
     private val lastFrame get() = (_state.value.frameCount - 1).coerceAtLeast(0)
 
+    /** Clip time of the audio actually played, or -1 while no audio plays.
+     *  Video follows it: it is the only clock that runs at real speed. */
+    private val audioClockMs = java.util.concurrent.atomic.AtomicLong(-1)
+
     fun seekTo(frame: Int) = _state.update { it.copy(pos = frame.coerceIn(0, lastFrame)) }
 
     fun skip(frames: Int) = _state.update { it.copy(pos = (it.pos + frames).coerceIn(0, lastFrame), paused = false) }
@@ -171,11 +175,15 @@ class ClipPlayback(
                     if (s.paused) {
                         80L
                     } else {
+                        val (next, wait) = advanceVideo(
+                            s.pos,
+                            player.frameMs,
+                            audioClockMs.get(),
+                            System.currentTimeMillis() - decodeStart
+                        )
                         // A seek during the decode wins over the advance.
-                        _state.update { if (it.pos == s.pos) it.copy(pos = it.pos + 1) else it }
-                        // Count the decode against the frame interval, or
-                        // video runs slow and drifts from the audio clock.
-                        (player.frameMs - (System.currentTimeMillis() - decodeStart)).coerceAtLeast(0)
+                        _state.update { if (it.pos == s.pos) it.copy(pos = minOf(next, player.frames.size)) else it }
+                        wait
                     }
                 }
             }
@@ -198,6 +206,7 @@ class ClipPlayback(
         try {
             feedAudio(track)
         } finally {
+            audioClockMs.set(-1)
             runCatching { track.stop() }
             track.release()
         }
@@ -215,7 +224,10 @@ class ClipPlayback(
         var streaming = false
         while (isActive) {
             val s = _state.value
-            if (s.paused || s.pos >= player.frames.size) {
+            // Wait for the first decoded frame: starting audio during that
+            // slow first decode put it ahead and forced re-seeks.
+            if (s.paused || s.frame == null || s.pos >= player.frames.size) {
+                audioClockMs.set(-1)
                 if (streaming) track.pause()
                 streaming = false
                 delay(60)
@@ -234,6 +246,7 @@ class ClipPlayback(
                     track.flush()
                     track.play()
                 }
+                audioClockMs.set(syncedAtMs + track.playbackHeadPosition * 1000L / player.audioRate.coerceAtLeast(1))
                 val n = player.audioRead(bytePos, buf)
                 if (n > 0) {
                     bytePos += n
@@ -282,4 +295,17 @@ private suspend fun fetchOrFail(
     fetch(onProgress)
 } catch (e: java.io.IOException) {
     DownloadResult.Failed(e.message ?: e.javaClass.simpleName)
+}
+
+/**
+ * The frame to show next and how long to wait for it. With audio playing
+ * ([audioClockMs] >= 0) video jumps to the frame matching the audio, so a
+ * slow decode drops frames instead of falling behind and forcing an audible
+ * audio re-seek. Without audio it advances one frame and counts the decode
+ * against the frame interval.
+ */
+internal fun advanceVideo(pos: Int, frameMs: Long, audioClockMs: Long, decodeMs: Long): Pair<Int, Long> {
+    if (audioClockMs < 0) return pos + 1 to (frameMs - decodeMs).coerceAtLeast(0)
+    val next = maxOf(pos + 1, (audioClockMs / frameMs).toInt())
+    return next to (next * frameMs - audioClockMs).coerceIn(0, frameMs)
 }
