@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import com.juanm.easydashcam.core.net.CameraNetworkBinder
 import com.juanm.easydashcam.core.net.GpsocketClient
 import kotlinx.coroutines.CoroutineScope
@@ -80,7 +81,6 @@ class CameraSession(context: Context) {
     // explicitly disconnected.
     private var hadConnection = false
     private var userDisconnected = false
-    private var wifiPresent = false
 
     init {
         scope.launch {
@@ -88,18 +88,27 @@ class CameraSession(context: Context) {
                 if (it is GpsocketClient.State.Connected) hadConnection = true
             }
         }
+        // Watch Wi-Fi networks, not the default network: the camera hotspot
+        // has no internet, so with mobile data on it is never the default
+        // and a default-network callback never sees it come back.
+        val wifi = NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build()
         val cm = context.getSystemService(ConnectivityManager::class.java)
-        cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
-            override fun onCapabilitiesChanged(n: Network, caps: NetworkCapabilities) {
-                if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) && !wifiPresent) {
-                    wifiPresent = true
-                    maybeReconnect()
+        cm.registerNetworkCallback(
+            wifi,
+            object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(n: Network) {
+                    scope.launch { maybeReconnect() }
+                }
+
+                // A dropped hotspot sends no FIN; without this the socket
+                // reads as Connected until its 15 s timeout, and a network
+                // that returns inside that window never triggers a reconnect.
+                override fun onLost(n: Network) {
+                    if (n != cm.boundNetworkForProcess) return
+                    scope.launch { if (!userDisconnected) client.disconnect() }
                 }
             }
-            override fun onLost(n: Network) {
-                wifiPresent = false
-            }
-        })
+        )
     }
 
     private fun maybeReconnect() {
