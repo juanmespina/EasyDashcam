@@ -2,9 +2,6 @@ package com.juanm.easydashcam.ui.files
 
 import android.Manifest
 import android.graphics.Bitmap
-import android.media.AudioAttributes
-import android.media.AudioFormat
-import android.media.AudioTrack
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -80,7 +77,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -108,9 +104,6 @@ import com.juanm.easydashcam.ui.camera.CameraViewModel
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withPermit
 
@@ -1069,16 +1062,6 @@ private fun PlayerDialog(
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
-    var frame by remember(uri, remote) { mutableStateOf<Bitmap?>(null) }
-    var error by remember(uri, remote) { mutableStateOf<String?>(null) }
-    var pos by remember(uri, remote) { mutableIntStateOf(0) }
-    var paused by remember(uri, remote) { mutableStateOf(false) }
-    var indexed by remember(uri, remote) { mutableStateOf(false) }
-    var buffering by remember(uri, remote) { mutableStateOf(false) }
-    var streamGot by remember(uri, remote) { mutableLongStateOf(0L) }
-    var streamTotal by remember(uri, remote) { mutableLongStateOf(0L) }
-    var streamDone by remember(uri, remote) { mutableStateOf(remote == null) }
-    var indexedFrames by remember(uri, remote) { mutableIntStateOf(0) }
     var saved by remember(uri, remote) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
@@ -1115,200 +1098,29 @@ private fun PlayerDialog(
         }
     }
 
-    LaunchedEffect(player) {
-        if (player == null) {
-            error = context.getString(R.string.err_file_unavailable)
-            return@LaunchedEffect
-        }
-        try {
-            var fetchErr: String? = null
-            if (remote != null) {
-                launch(kotlinx.coroutines.Dispatchers.IO) {
-                    try {
-                        java.io.FileOutputStream(tmpFile!!).use { fos ->
-                            var lastMs = 0L
-                            when (
-                                val r = vm.streamFile(remote, fos) { got, total ->
-                                    val now = System.currentTimeMillis()
-                                    // Throttle: the callback fires per 32 KiB chunk.
-                                    if (now - lastMs >= 300 || got >= total) {
-                                        lastMs = now
-                                        streamGot = got
-                                        streamTotal = total
-                                    }
-                                }
-                            ) {
-                                is GpsocketClient.DownloadResult.Success -> {}
-                                is GpsocketClient.DownloadResult.Refused ->
-                                    fetchErr = context.getString(R.string.err_camera_refused)
-                                is GpsocketClient.DownloadResult.Incomplete ->
-                                    fetchErr = context.getString(R.string.err_transfer_stopped)
-                                is GpsocketClient.DownloadResult.Failed ->
-                                    fetchErr = r.reason
-                                is GpsocketClient.DownloadResult.NotConnected ->
-                                    fetchErr = context.getString(R.string.dl_err_not_connected)
-                            }
-                        }
-                    } finally {
-                        streamDone = true
+    val playback = remember(player) {
+        player?.let { p ->
+            ClipPlayback(
+                p,
+                isImage,
+                fetch = remote?.let { r ->
+                    { onProgress ->
+                        java.io.FileOutputStream(tmpFile!!).use { vm.streamFile(r, it, onProgress) }
                     }
                 }
-            }
-            // Wait until something is playable: local clips index once;
-            // streams extend the index as chunks arrive.
-            if (remote == null) {
-                player.index()
-            } else if (isImage) {
-                while (!streamDone) delay(150)
-                fetchErr?.let {
-                    error = it
-                    return@LaunchedEffect
-                }
-                player.index()
-            } else {
-                while (player.frames.isEmpty() && !streamDone) {
-                    player.extendIndex()
-                    if (player.frames.isEmpty()) delay(150)
-                }
-                player.extendIndex()
-            }
-            fetchErr?.let {
-                error = it
-                return@LaunchedEffect
-            }
-            if (player.frames.isEmpty()) {
-                error = context.getString(R.string.err_no_video_frames)
-                return@LaunchedEffect
-            }
-            indexedFrames = player.frames.size
-            indexed = true
-            // Audio: PCM chunks feed a self-clocking AudioTrack; seeks move the
-            // PCM read position to match the video frame time.
-            // Hoisted so the outer finally can stop() a write stuck on a
-            // full buffer — a blocking write doesn't observe cancellation.
-            var audioTrack: AudioTrack? = null
-            val audioJob = if (!player.hasAudio) {
-                null
-            } else {
-                launch {
-                    val buf = ByteArray(8192)
-                    val track = AudioTrack.Builder()
-                        .setAudioAttributes(
-                            AudioAttributes.Builder()
-                                .setUsage(AudioAttributes.USAGE_MEDIA)
-                                .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE).build()
-                        )
-                        .setAudioFormat(
-                            AudioFormat.Builder()
-                                .setSampleRate(player.audioRate)
-                                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                                .setChannelMask(
-                                    if (player.audioChannels == 1) {
-                                        AudioFormat.CHANNEL_OUT_MONO
-                                    } else {
-                                        AudioFormat.CHANNEL_OUT_STEREO
-                                    }
-                                )
-                                .build()
-                        )
-                        .setTransferMode(AudioTrack.MODE_STREAM)
-                        .build()
-                    audioTrack = track
-                    if (track.state != AudioTrack.STATE_INITIALIZED) {
-                        track.release()
-                        return@launch
-                    }
-                    var bytePos = 0L
-                    var lastVideoPos = -1
-                    var streaming = false
-                    try {
-                        while (isActive) {
-                            if (paused || pos >= player.frames.size) {
-                                if (streaming) {
-                                    track.pause()
-                                    streaming = false
-                                }
-                                delay(60)
-                                continue
-                            }
-                            if (!streaming) {
-                                track.play()
-                                streaming = true
-                            }
-                            if (pos != lastVideoPos + 1) { // seek or restart
-                                bytePos = player.audioPosForMs(pos * player.frameMs)
-                                track.pause()
-                                track.flush()
-                                track.play()
-                            }
-                            lastVideoPos = pos
-                            val n = player.audioRead(bytePos, buf)
-                            if (n <= 0) {
-                                delay(60)
-                                continue
-                            }
-                            bytePos += n
-                            track.write(buf, 0, n) // blocks — paces the playback
-                        }
-                    } finally {
-                        runCatching { track.stop() }
-                        track.release()
-                    }
-                }
-            }
-            var lastDecoded = -1
-            try {
-                while (true) {
-                    // Streaming: index whatever arrived since the last pass —
-                    // the scan resumes at the last complete chunk, so this is
-                    // ~one header read per iteration when idle.
-                    if (remote != null) {
-                        player.extendIndex()
-                        if (indexedFrames != player.frames.size) {
-                            indexedFrames = player.frames.size
-                        }
-                    }
-                    if (pos >= player.frames.size) {
-                        if (streamDone) {
-                            paused = true
-                        } // real EOF
-                        else {
-                            buffering = true
-                            delay(120)
-                            continue
-                        }
-                    }
-                    // Decode when playing, or once after the slider moved while paused.
-                    if (paused && pos == lastDecoded) {
-                        delay(80)
-                        continue
-                    }
-                    if (pos >= player.frames.size) {
-                        delay(80)
-                        continue
-                    }
-                    buffering = false
-                    frame = player.frameAt(pos)
-                    lastDecoded = pos
-                    if (paused) {
-                        delay(80)
-                        continue
-                    }
-                    pos++
-                    delay(player.frameMs)
-                }
-            } finally {
-                audioJob?.cancel()
-                // Unblock a write() stuck on a full buffer — it doesn't
-                // observe cancellation, so it would delay the release.
-                audioTrack?.let { runCatching { it.stop() } }
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            error = e.message ?: e.javaClass.simpleName
+            )
         }
     }
+    LaunchedEffect(playback) { playback?.run() }
+    val st = playback?.state?.collectAsStateWithLifecycle()?.value ?: ClipPlayback.State()
+    val error = if (playback == null) {
+        stringResource(R.string.err_file_unavailable)
+    } else {
+        st.failure?.let { failureText(it) }
+    }
+    val frame = st.frame
+    val pos = st.pos
+    val paused = st.paused
 
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         // Immersive while the player is up — a swipe still reveals the bars.
@@ -1329,21 +1141,21 @@ private fun PlayerDialog(
                     modifier = Modifier.align(Alignment.Center).padding(24.dp)
                 )
                 frame != null -> Image(
-                    bitmap = frame!!.asImageBitmap(),
+                    bitmap = frame.asImageBitmap(),
                     contentDescription = stringResource(R.string.playback),
                     contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize()
                 )
                 else -> CircularProgressIndicator(Modifier.align(Alignment.Center))
             }
-            if (remote != null && (buffering || streamTotal > 0)) {
+            if (remote != null && (st.buffering || st.streamTotal > 0)) {
                 Text(
-                    if (buffering && streamTotal > 0) {
-                        stringResource(R.string.buffering_pct, streamGot * 100f / streamTotal)
-                    } else if (buffering) {
+                    if (st.buffering && st.streamTotal > 0) {
+                        stringResource(R.string.buffering_pct, st.streamGot * 100f / st.streamTotal)
+                    } else if (st.buffering) {
                         stringResource(R.string.buffering)
                     } else {
-                        stringResource(R.string.streaming_pct, streamGot * 100f / streamTotal)
+                        stringResource(R.string.streaming_pct, st.streamGot * 100f / st.streamTotal)
                     },
                     color = Color.White,
                     style = MaterialTheme.typography.bodySmall,
@@ -1358,10 +1170,11 @@ private fun PlayerDialog(
                 // re-pulling them over the socket. Allowed once frames are
                 // indexed — a truncated AVI still plays to its last whole
                 // chunk, so the user can keep just the part they watched.
-                if (remote != null && error == null && (streamDone || indexed)) {
+                val playable = st.streamDone || st.indexed
+                if (remote != null && error == null && playable) {
                     IconButton(onClick = {
                         scope.launch {
-                            saved = vm.saveStreamed(remote, tmpFile!!, partial = !streamDone)
+                            saved = vm.saveStreamed(remote, tmpFile!!, partial = !st.streamDone)
                         }
                     }, enabled = !saved) {
                         Icon(
@@ -1389,15 +1202,14 @@ private fun PlayerDialog(
                 }
             }
             val pl = player
-            if (indexed && pl != null && indexedFrames > 1) {
-                val count = indexedFrames
+            val controls = playback?.takeIf { st.indexed && st.frameCount > 1 }
+            if (controls != null && pl != null) {
+                val count = st.frameCount
                 val skip = (1000L / pl.frameMs.coerceAtLeast(1)).toInt().coerceAtLeast(1)
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(16.dp)) {
                     Slider(
                         value = pos.toFloat(),
-                        onValueChange = {
-                            pos = it.toInt().coerceIn(0, count - 1)
-                        },
+                        onValueChange = { controls.seekTo(it.toInt()) },
                         valueRange = 0f..(count - 1).toFloat()
                     )
                     Row(
@@ -1405,20 +1217,14 @@ private fun PlayerDialog(
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = {
-                            pos = (pos - skip).coerceAtLeast(0)
-                            paused = false
-                        }) {
+                        IconButton(onClick = { controls.skip(-skip) }) {
                             Icon(
                                 Icons.Default.Replay10,
                                 contentDescription = stringResource(R.string.back_1s),
                                 tint = Color.White
                             )
                         }
-                        IconButton(onClick = {
-                            paused = !paused
-                            if (!paused && pos >= count) pos = 0
-                        }) {
+                        IconButton(onClick = controls::togglePause) {
                             Icon(
                                 if (paused) Icons.Default.PlayArrow else Icons.Default.Pause,
                                 contentDescription = stringResource(
@@ -1427,10 +1233,7 @@ private fun PlayerDialog(
                                 tint = Color.White
                             )
                         }
-                        IconButton(onClick = {
-                            pos = (pos + skip).coerceAtMost(count - 1)
-                            paused = false
-                        }) {
+                        IconButton(onClick = { controls.skip(skip) }) {
                             Icon(
                                 Icons.Default.Forward10,
                                 contentDescription = stringResource(R.string.forward_1s),
@@ -1451,5 +1254,18 @@ private fun PlayerDialog(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun failureText(failure: ClipPlayback.Failure): String = when (failure) {
+    is ClipPlayback.Failure.Crash -> failure.message
+    ClipPlayback.Failure.NoFrames -> stringResource(R.string.err_no_video_frames)
+    is ClipPlayback.Failure.Transfer -> when (val r = failure.result) {
+        is GpsocketClient.DownloadResult.Refused -> stringResource(R.string.err_camera_refused)
+        is GpsocketClient.DownloadResult.Incomplete -> stringResource(R.string.err_transfer_stopped)
+        is GpsocketClient.DownloadResult.Failed -> r.reason
+        is GpsocketClient.DownloadResult.NotConnected -> stringResource(R.string.dl_err_not_connected)
+        is GpsocketClient.DownloadResult.Success -> ""
     }
 }

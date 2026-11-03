@@ -1,0 +1,249 @@
+package com.juanm.easydashcam.ui.files
+
+import android.graphics.Bitmap
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioTrack
+import com.juanm.easydashcam.core.media.AviMjpegPlayer
+import com.juanm.easydashcam.core.net.GpsocketClient.DownloadResult
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+
+/**
+ * Plays one AVI/MJPEG clip: a local file, or a streamed one whose bytes
+ * [fetch] writes into the file [player] reads while it grows.
+ *
+ * The video loop decodes one frame per [AviMjpegPlayer.frameMs]; PCM audio
+ * feeds a self-clocking AudioTrack and follows the video position on seeks.
+ * The UI observes [state] and calls [seekTo], [skip] and [togglePause].
+ */
+class ClipPlayback(
+    private val player: AviMjpegPlayer,
+    private val isImage: Boolean,
+    private val fetch: (suspend (onProgress: (Long, Long) -> Unit) -> DownloadResult)?
+) {
+    sealed interface Failure {
+        data class Transfer(val result: DownloadResult) : Failure
+        data object NoFrames : Failure
+        data class Crash(val message: String) : Failure
+    }
+
+    data class State(
+        val frame: Bitmap? = null,
+        val failure: Failure? = null,
+        val pos: Int = 0,
+        val paused: Boolean = false,
+        val indexed: Boolean = false,
+        val buffering: Boolean = false,
+        val streamGot: Long = 0,
+        val streamTotal: Long = 0,
+        val streamDone: Boolean = false,
+        val frameCount: Int = 0
+    )
+
+    private val _state = MutableStateFlow(State(streamDone = fetch == null))
+    val state: StateFlow<State> = _state
+
+    private val lastFrame get() = (_state.value.frameCount - 1).coerceAtLeast(0)
+
+    fun seekTo(frame: Int) = _state.update { it.copy(pos = frame.coerceIn(0, lastFrame)) }
+
+    fun skip(frames: Int) = _state.update { it.copy(pos = (it.pos + frames).coerceIn(0, lastFrame), paused = false) }
+
+    fun togglePause() = _state.update {
+        val paused = !it.paused
+        it.copy(paused = paused, pos = if (!paused && it.pos >= it.frameCount) 0 else it.pos)
+    }
+
+    /** Runs until cancelled. Failures end up in [State.failure]. */
+    // A corrupt or truncated clip can throw from any parser or decoder
+    // call; it must show an error in the player, not crash the app.
+    @Suppress("TooGenericExceptionCaught")
+    suspend fun run() = coroutineScope {
+        try {
+            var transfer: DownloadResult? = null
+            if (fetch != null) launch(Dispatchers.IO) { transfer = fetchClip(fetch) }
+            if (!awaitPlayable { transfer }) return@coroutineScope
+            _state.update { it.copy(frameCount = player.frames.size, indexed = true) }
+            var audioTrack: AudioTrack? = null
+            val audioJob = if (player.hasAudio) launch { playAudio { audioTrack = it } } else null
+            try {
+                playVideo()
+            } finally {
+                audioJob?.cancel()
+                // Unblock a write() stuck on a full buffer — it doesn't
+                // observe cancellation, so it would delay the release.
+                audioTrack?.let { runCatching { it.stop() } }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val failure = Failure.Crash(e.message ?: e.javaClass.simpleName)
+            _state.update { it.copy(failure = failure) }
+        }
+    }
+
+    private suspend fun fetchClip(fetch: suspend (onProgress: (Long, Long) -> Unit) -> DownloadResult): DownloadResult {
+        var lastMs = 0L
+        return try {
+            fetch { got, total ->
+                val now = System.currentTimeMillis()
+                // Throttle: the callback fires per 32 KiB chunk.
+                if (now - lastMs >= 300 || got >= total) {
+                    lastMs = now
+                    _state.update { it.copy(streamGot = got, streamTotal = total) }
+                }
+            }
+        } catch (e: java.io.IOException) {
+            DownloadResult.Failed(e.message ?: e.javaClass.simpleName)
+        } finally {
+            _state.update { it.copy(streamDone = true) }
+        }
+    }
+
+    /** Index what is playable; false (with [State.failure] set) when
+     *  playback cannot start. */
+    private suspend fun awaitPlayable(transfer: () -> DownloadResult?): Boolean {
+        indexAvailable(transfer)
+        val failure = transferFailure(transfer()) ?: Failure.NoFrames.takeIf { player.frames.isEmpty() }
+        if (failure != null) _state.update { it.copy(failure = failure) }
+        return failure == null
+    }
+
+    // Local clips index once. A photo is one JPEG, so it waits for the whole
+    // transfer. A streamed video indexes as soon as its first frame arrives.
+    private suspend fun indexAvailable(transfer: () -> DownloadResult?) {
+        when {
+            fetch == null -> player.index()
+            isImage -> {
+                while (!_state.value.streamDone) delay(150)
+                if (transferFailure(transfer()) == null) player.index()
+            }
+            else -> {
+                while (player.frames.isEmpty() && !_state.value.streamDone) {
+                    player.extendIndex()
+                    if (player.frames.isEmpty()) delay(150)
+                }
+                player.extendIndex()
+            }
+        }
+    }
+
+    private suspend fun playVideo() {
+        var lastDecoded = -1
+        while (true) {
+            // Streaming: index whatever arrived since the last pass — the
+            // scan resumes at the last complete chunk, so this is ~one header
+            // read per iteration when idle.
+            if (fetch != null) {
+                player.extendIndex()
+                _state.update { it.copy(frameCount = player.frames.size) }
+            }
+            val s = _state.value
+            val atEnd = s.pos >= player.frames.size
+            val waitMs = when {
+                atEnd && !s.streamDone -> {
+                    _state.update { it.copy(buffering = true) }
+                    120L
+                }
+                atEnd -> {
+                    _state.update { it.copy(paused = true) } // end of the clip
+                    80L
+                }
+                // Paused: decode once after the slider moved, then idle.
+                s.paused && s.pos == lastDecoded -> 80L
+                else -> {
+                    val bmp = player.frameAt(s.pos)
+                    lastDecoded = s.pos
+                    _state.update { it.copy(frame = bmp, buffering = false) }
+                    if (s.paused) {
+                        80L
+                    } else {
+                        // A seek during the decode wins over the advance.
+                        _state.update { if (it.pos == s.pos) it.copy(pos = it.pos + 1) else it }
+                        player.frameMs
+                    }
+                }
+            }
+            delay(waitMs)
+        }
+    }
+
+    private suspend fun CoroutineScope.playAudio(onTrack: (AudioTrack) -> Unit) {
+        val track = newAudioTrack(player.audioRate, player.audioChannels)
+        onTrack(track)
+        if (track.state != AudioTrack.STATE_INITIALIZED) {
+            track.release()
+            return
+        }
+        try {
+            feedAudio(track)
+        } finally {
+            runCatching { track.stop() }
+            track.release()
+        }
+    }
+
+    // PCM chunks feed a self-clocking AudioTrack; seeks move the PCM read
+    // position to match the video frame time.
+    private suspend fun CoroutineScope.feedAudio(track: AudioTrack) {
+        val buf = ByteArray(8192)
+        var bytePos = 0L
+        var lastVideoPos = -1
+        var streaming = false
+        while (isActive) {
+            val s = _state.value
+            if (s.paused || s.pos >= player.frames.size) {
+                if (streaming) track.pause()
+                streaming = false
+                delay(60)
+            } else {
+                if (!streaming) track.play()
+                streaming = true
+                if (s.pos != lastVideoPos + 1) { // seek or restart
+                    bytePos = player.audioPosForMs(s.pos * player.frameMs)
+                    track.pause()
+                    track.flush()
+                    track.play()
+                }
+                lastVideoPos = s.pos
+                val n = player.audioRead(bytePos, buf)
+                if (n > 0) {
+                    bytePos += n
+                    track.write(buf, 0, n) // blocks — paces the playback
+                } else {
+                    delay(60)
+                }
+            }
+        }
+    }
+}
+
+private fun newAudioTrack(rate: Int, channels: Int): AudioTrack = AudioTrack.Builder()
+    .setAudioAttributes(
+        AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE).build()
+    )
+    .setAudioFormat(
+        AudioFormat.Builder()
+            .setSampleRate(rate)
+            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+            .setChannelMask(
+                if (channels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO
+            )
+            .build()
+    )
+    .setTransferMode(AudioTrack.MODE_STREAM)
+    .build()
+
+private fun transferFailure(result: DownloadResult?): ClipPlayback.Failure? =
+    result?.takeIf { it !is DownloadResult.Success }?.let { ClipPlayback.Failure.Transfer(it) }
