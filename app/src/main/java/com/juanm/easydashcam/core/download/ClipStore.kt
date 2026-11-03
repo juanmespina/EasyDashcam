@@ -57,7 +57,7 @@ object ClipStore {
                 MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
                 values
             ) ?: return null
-            val out = context.contentResolver.openOutputStream(uri)
+            val out = runCatching { context.contentResolver.openOutputStream(uri) }.getOrNull()
             if (out == null) {
                 runCatching { context.contentResolver.delete(uri, null, null) }
                 return null
@@ -128,8 +128,6 @@ object ClipStore {
             dest.fallback.renameTo(
                 File(dest.fallback.parentFile, dest.label.removeSuffix(".avi") + ".jpg")
             )
-        } else {
-            // API <29 videos: nothing to clear, the file is already final.
         }
     }
 

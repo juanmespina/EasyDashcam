@@ -332,8 +332,13 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 val head = ByteArray(4)
                 java.io.FileInputStream(src).use { it.read(head, 0, 4) }
                 val isJpeg = head[0] == 0xFF.toByte() && head[1] == 0xD8.toByte()
-                dest.out.use { o -> src.inputStream().use { it.copyTo(o) } }
-                ClipStore.commit(getApplication(), dest, isJpeg)
+                runCatching {
+                    dest.out.use { o -> src.inputStream().use { it.copyTo(o) } }
+                    ClipStore.commit(getApplication(), dest, isJpeg)
+                }.onFailure {
+                    ClipStore.fail(getApplication(), dest)
+                    throw it
+                }
                 session.updateDownload(
                     f.uniqueId,
                     CameraSession.DownloadState(src.length(), src.length(), done = true)

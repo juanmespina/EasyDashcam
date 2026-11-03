@@ -62,7 +62,14 @@ class DownloadService : Service() {
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val queue = Channel<GpsocketClient.CameraFile>(Channel.UNLIMITED)
+
+    // A receive cancelled by the idle timeout can drop the element it was
+    // handed; forget that clip so it shows as downloadable, not queued forever.
+    private val queue = Channel<GpsocketClient.CameraFile>(Channel.UNLIMITED) { f ->
+        pending.decrementAndGet()
+        queuedIds -= f.uniqueId
+        session.removeDownload(f.uniqueId)
+    }
 
     /** Items sent to [queue] and not yet received — Channel.isEmpty is experimental. */
     private val pending = java.util.concurrent.atomic.AtomicInteger(0)
@@ -116,13 +123,14 @@ class DownloadService : Service() {
                         ?.let { runCatching { java.time.LocalDateTime.parse(it) }.getOrNull() },
                     size = intent.getLongExtra(EXTRA_SIZE, 0)
                 )
+                // queuedIds lives from enqueue to finishFile — a second
+                // DOWNLOAD intent for an in-flight clip would write a
+                // duplicate MediaStore entry. Checked before clearing the
+                // cancel mark so a duplicate cannot undo a pending cancel.
+                if (!queuedIds.add(f.uniqueId)) return START_NOT_STICKY
                 // A re-queue after cancel must clear the mark or the worker
                 // kills it again instantly — the set lived until process death.
                 cancelled -= f.uniqueId
-                // queuedIds lives from enqueue to finishFile — a second
-                // DOWNLOAD intent for an in-flight clip would write a
-                // duplicate MediaStore entry.
-                if (!queuedIds.add(f.uniqueId)) return START_NOT_STICKY
                 pending.incrementAndGet()
                 queue.trySend(f)
                 enqueued++
@@ -236,16 +244,12 @@ class DownloadService : Service() {
                 session.client.downloadFile(f, it) { got, total ->
                     if (f.uniqueId in cancelled) {
                         // The client drains the rest of the camera's stream
-                        // before it returns (seconds for a large clip); show
-                        // the cancel now rather than after the drain.
+                        // before it returns (seconds to minutes). Show the
+                        // cancel now, but not done: the camera is still busy,
+                        // so Live stays paused and a retry waits for finishFile.
                         session.updateDownload(
                             f.uniqueId,
-                            CameraSession.DownloadState(
-                                got,
-                                total,
-                                done = true,
-                                error = getString(R.string.dl_err_cancelled)
-                            )
+                            CameraSession.DownloadState(got, total, error = getString(R.string.dl_err_cancelled))
                         )
                         throw CancellationException("user cancelled")
                     }
@@ -390,6 +394,9 @@ class DownloadService : Service() {
 
     override fun onDestroy() {
         scope.cancel()
+        // Clips still waiting will never run; make them downloadable again
+        // instead of "queued" for the rest of the process.
+        queuedIds.forEach(session::removeDownload)
         super.onDestroy()
     }
 

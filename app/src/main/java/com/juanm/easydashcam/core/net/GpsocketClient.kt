@@ -81,8 +81,9 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
         /** No 0x0503 frame for this long ends an aborted stream's drain. */
         private const val DRAIN_QUIET_MS = 1_500L
 
-        /** Upper bound on one drain — a 12 MB clip streams in a few seconds. */
-        private const val DRAIN_CAP_MS = 30_000L
+        /** A drain may take this long plus the rest of the file at [DRAIN_MIN_BYTES_PER_SEC]. */
+        private const val DRAIN_BASE_MS = 30_000L
+        private const val DRAIN_MIN_BYTES_PER_SEC = 100L * 1024
 
         /**
          * Split a camera byte stream into complete frames. Returns the frames
@@ -571,6 +572,7 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
         // arrives: an aborted stream must be drained before the lock is
         // released, or its chunks land in the next download.
         var streamOpen = false
+        var received = 0L
         try {
             val idArgs = byteArrayOf(
                 (file.id and 0xFF).toByte(),
@@ -605,7 +607,6 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
             streamOpen = true
 
             val expected = file.sizeBytes
-            var received = 0L
             var result: DownloadResult = DownloadResult.Incomplete(0, expected)
             while (true) {
                 val f = kotlinx.coroutines.withTimeoutOrNull(timeoutMs) { ch.receive() } ?: break // stall -> Incomplete
@@ -638,7 +639,7 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
             }
             result
         } finally {
-            if (streamOpen) drainAbortedStream(ch)
+            if (streamOpen) drainAbortedStream(ch, file.sizeBytes - received)
             out.flush()
             job.cancel()
             if (_state.replayCache.firstOrNull() is State.Connected) startHeartbeat()
@@ -652,11 +653,15 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
      * NonCancellable: a cancelled caller still holds the lock until the
      * socket is clean.
      */
-    private suspend fun drainAbortedStream(ch: kotlinx.coroutines.channels.Channel<Frame>) =
+    private suspend fun drainAbortedStream(ch: kotlinx.coroutines.channels.Channel<Frame>, remainingBytes: Long) =
         withContext(kotlinx.coroutines.NonCancellable) {
             val startMs = System.currentTimeMillis()
             var bytes = 0L
-            kotlinx.coroutines.withTimeoutOrNull(DRAIN_CAP_MS) {
+            // Front-channel clips reach ~120 MB (~160 s at the measured
+            // ~750 KB/s); a fixed cap would cut their tail into the next
+            // transfer. The quiet gap still ends a stream that stops early.
+            val capMs = DRAIN_BASE_MS + remainingBytes * 1000 / DRAIN_MIN_BYTES_PER_SEC
+            kotlinx.coroutines.withTimeoutOrNull(capMs) {
                 while (true) {
                     val f = kotlinx.coroutines.withTimeoutOrNull(DRAIN_QUIET_MS) { ch.receive() } ?: break
                     if (f.cmd != CMD_DOWNLOAD || f.type == 3) continue
@@ -768,12 +773,12 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
             } catch (_: Throwable) {
                 // socket closed
             } finally {
-                heartbeatJob?.cancel()
-                heartbeatJob = null
-                // Only the current socket's loop may report the disconnect —
-                // a stale loop dying after a reconnect would clobber the new
-                // Connected state.
+                // Only the current socket's loop may stop the heartbeat and
+                // report the disconnect — a stale loop dying after a
+                // reconnect would clobber the new session.
                 if (gen == socketGen) {
+                    heartbeatJob?.cancel()
+                    heartbeatJob = null
                     stateMutex.withLock { _state.emit(State.Disconnected) }
                     closeQuietly()
                 }
