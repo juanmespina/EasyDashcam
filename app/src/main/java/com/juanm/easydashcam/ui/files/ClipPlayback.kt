@@ -74,11 +74,11 @@ class ClipPlayback(
             if (!awaitPlayable { transfer }) return@coroutineScope
             _state.update { it.copy(frameCount = player.frames.size, indexed = true) }
             var audioTrack: AudioTrack? = null
-            val audioJob = if (player.hasAudio) launch { playAudio { audioTrack = it } } else null
+            val audioJob = launch { playAudio { audioTrack = it } }
             try {
                 playVideo()
             } finally {
-                audioJob?.cancel()
+                audioJob.cancel()
                 // Unblock a write() stuck on a full buffer — it doesn't
                 // observe cancellation, so it would delay the release.
                 audioTrack?.let { runCatching { it.stop() } }
@@ -178,6 +178,11 @@ class ClipPlayback(
     }
 
     private suspend fun CoroutineScope.playAudio(onTrack: (AudioTrack) -> Unit) {
+        // A streamed clip can deliver its first audio chunk after its first frame.
+        while (!player.hasAudio) {
+            if (fetch == null || (_state.value.streamDone && player.fullyIndexed)) return
+            delay(250)
+        }
         val track = newAudioTrack(player.audioRate, player.audioChannels)
         onTrack(track)
         if (track.state != AudioTrack.STATE_INITIALIZED) {

@@ -7,7 +7,9 @@ import java.io.File
 import java.io.RandomAccessFile
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AviMjpegPlayerTest {
@@ -253,5 +255,42 @@ class AviMjpegPlayerTest {
         assertNull(p.frameAt(0))
         assertNull(p.thumbnail(160))
         assertEquals(-1, p.audioRead(0, ByteArray(64)))
+    }
+
+    @Test
+    fun `a frames list a reader holds does not change when the index grows`() = runBlocking {
+        val avi = buildAvi(frames = List(3) { ByteArray(500) { it.toByte() } })
+        val f = File.createTempFile("avi-snap", ".bin").apply { deleteOnExit() }
+        RandomAccessFile(f, "rw").use { w ->
+            w.write(avi, 0, avi.size - 700)
+            val p = AviMjpegPlayer(w.channel)
+            p.extendIndex()
+            val held = p.frames
+            val heldSize = held.size
+            w.write(avi, avi.size - 700, 700)
+            p.extendIndex()
+            assertEquals(3, p.frames.size)
+            assertEquals(heldSize, held.size)
+        }
+    }
+
+    @Test
+    fun `audio becomes available when its first chunk arrives after the first frame`() = runBlocking {
+        val avi = buildAvi(frames = listOf(jpeg(1), jpeg(2)), audioChunks = listOf(ByteArray(64), ByteArray(64)))
+        val f = File.createTempFile("avi-audio", ".bin").apply { deleteOnExit() }
+        RandomAccessFile(f, "rw").use { w ->
+            // The builder writes every video chunk before the audio chunks,
+            // then a 40-byte idx1; cut inside the first audio chunk.
+            val cut = avi.size - 40 - 2 * (8 + 64) + 8
+            w.write(avi, 0, cut)
+            val p = AviMjpegPlayer(w.channel)
+            p.extendIndex()
+            assertEquals(2, p.frames.size)
+            assertFalse(p.hasAudio)
+            w.write(avi, cut, avi.size - cut)
+            p.extendIndex()
+            assertTrue(p.hasAudio)
+            assertEquals(128L, p.audioByteLen)
+        }
     }
 }

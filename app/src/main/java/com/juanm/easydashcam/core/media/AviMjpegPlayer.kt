@@ -25,16 +25,23 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
     /** Byte range of one JPEG frame inside the file. */
     data class FrameRef(val offset: Long, val length: Int)
 
-    /** Seek targets for every video chunk, in order. */
+    /** Seek targets for every video chunk, in order. While a clip streams,
+     *  each scan publishes a new immutable list: playback threads read it
+     *  while the scan thread appends. */
+    @Volatile
     var frames: List<FrameRef> = emptyList()
         private set
 
-    /** Byte ranges of the audio stream's chunks ('xxwb'), in order. */
-    var audioRefs: List<FrameRef> = emptyList()
-        private set
+    /** Audio chunk ranges ('xxwb') and each chunk's offset in the PCM
+     *  stream, published together so a reader never pairs one scan's
+     *  offsets with another scan's chunks. */
+    private class AudioIndex(val refs: List<FrameRef>, val starts: LongArray, val byteLen: Long)
 
-    /** Cumulative byte offset of each audio chunk in the PCM stream. */
-    private var audioStarts: LongArray = longArrayOf()
+    @Volatile
+    private var audio = AudioIndex(emptyList(), LongArray(0), 0)
+
+    val audioRefs: List<FrameRef> get() = audio.refs
+    val audioByteLen: Long get() = audio.byteLen
 
     /** WAVEFORMATEX fields from the audio stream's 'strf'. */
     var audioRate = 0
@@ -42,8 +49,6 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
     var audioChannels = 0
         private set
     var audioBytesPerSec = 0L
-        private set
-    var audioByteLen = 0L
         private set
     val hasAudio: Boolean get() = audioRefs.isNotEmpty() && audioBytesPerSec > 0
 
@@ -214,24 +219,12 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
         }
         if (scanPos >= riffSize) fullyIndexed = true
         if (!stopAfterFirstFrame) {
-            // Bind the live lists — during streaming they keep growing, so
-            // readers must see the same object rather than a snapshot.
-            frames = videoRefs
-            audioRefs = audioRefsFound
+            frames = videoRefs.toList()
+            if (audio.refs.size != audioRefsFound.size) audio = buildAudioIndex(audioRefsFound.toList())
         }
         if (thumbFrame == null) thumbFrame = videoRefs.firstOrNull()
         if (totalFrames > 0) probeDurationSec = totalFrames * usecPerFrame / 1e6
         if (videoRefs.isNotEmpty()) frameMs = (usecPerFrame / 1000).coerceIn(1, 500)
-        // Cumulative audio offsets — rebuilt only when the audio index grew.
-        if (audioStarts.size != audioRefsFound.size) {
-            audioStarts = LongArray(audioRefsFound.size)
-            var acc = 0L
-            audioRefsFound.forEachIndexed { i, r ->
-                audioStarts[i] = acc
-                acc += r.length
-            }
-            audioByteLen = acc
-        }
         added
     }
 
@@ -260,7 +253,17 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
 
     /** Byte offset in the concatenated PCM stream for time [ms] — PCM is
      *  constant-rate, so seeking is linear. */
-    fun audioPosForMs(ms: Long): Long = (ms * audioBytesPerSec / 1000).coerceIn(0, audioByteLen)
+    fun audioPosForMs(ms: Long): Long = (ms * audioBytesPerSec / 1000).coerceIn(0, audio.byteLen)
+
+    private fun buildAudioIndex(refs: List<FrameRef>): AudioIndex {
+        val starts = LongArray(refs.size)
+        var acc = 0L
+        refs.forEachIndexed { i, r ->
+            starts[i] = acc
+            acc += r.length
+        }
+        return AudioIndex(refs, starts, acc)
+    }
 
     /**
      * Read up to [len] bytes of PCM at stream offset [pos] into [out].
@@ -270,15 +273,16 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
      */
     suspend fun audioRead(pos: Long, out: ByteArray, off: Int = 0, len: Int = out.size): Int =
         withContext(Dispatchers.IO) {
-            if (!hasAudio || pos < 0 || pos >= audioByteLen) return@withContext -1
+            val a = audio
+            if (!hasAudio || pos < 0 || pos >= a.byteLen) return@withContext -1
             var lo = 0
-            var hi = audioStarts.size - 1
+            var hi = a.starts.size - 1
             while (lo < hi) {
                 val mid = (lo + hi + 1) / 2
-                if (audioStarts[mid] <= pos) lo = mid else hi = mid - 1
+                if (a.starts[mid] <= pos) lo = mid else hi = mid - 1
             }
-            val ref = audioRefs[lo]
-            val skip = (pos - audioStarts[lo]).toInt()
+            val ref = a.refs[lo]
+            val skip = (pos - a.starts[lo]).toInt()
             if (skip >= ref.length) return@withContext -1
             val n = minOf(len, ref.length - skip)
             val data = readBytesAt(ref.offset + skip, n) ?: return@withContext -1
