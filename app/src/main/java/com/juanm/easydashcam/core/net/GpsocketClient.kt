@@ -541,6 +541,9 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
         data object Refused : DownloadResult()
         data class Incomplete(val bytes: Long, val expected: Long) : DownloadResult()
         data class Failed(val reason: String) : DownloadResult()
+
+        /** No camera session: nothing was sent. */
+        data object NotConnected : DownloadResult()
     }
 
     /**
@@ -557,6 +560,13 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
         timeoutMs: Long = 10_000,
         onProgress: (received: Long, total: Long) -> Unit = { _, _ -> }
     ): DownloadResult = requestLock.withLock {
+        // Writes are silent no-ops without a socket; failing here saves the
+        // 10 s select timeout per queued file.
+        // disconnect() clears output at once but publishes its state from a
+        // coroutine, so check both.
+        if (output == null || _state.replayCache.firstOrNull() !is State.Connected) {
+            return@withLock DownloadResult.NotConnected
+        }
         heartbeatJob?.cancel() // Viidure sends no keepalives mid-transfer
         // UNLIMITED: trySend on a 64-slot channel silently dropped chunks
         // whenever the disk writer stalled ~1 s, ending transfers as
@@ -647,7 +657,7 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
             if (streamOpen) drainAbortedStream(ch)
             out.flush()
             job.cancel()
-            startHeartbeat()
+            if (_state.replayCache.firstOrNull() is State.Connected) startHeartbeat()
         }
     }
 

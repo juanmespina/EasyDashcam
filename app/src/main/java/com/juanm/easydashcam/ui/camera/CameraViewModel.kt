@@ -534,6 +534,8 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                         log("stalled at ${result.bytes}/${result.expected} B")
                     is GpsocketClient.DownloadResult.Failed ->
                         log("failed: ${result.reason}")
+                    is GpsocketClient.DownloadResult.NotConnected ->
+                        log("not connected")
                 }
             }.onFailure { log("download failed: ${it.message}") }
         }

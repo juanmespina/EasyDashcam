@@ -1145,6 +1145,8 @@ private fun PlayerDialog(
                                     fetchErr = context.getString(R.string.err_transfer_stopped)
                                 is GpsocketClient.DownloadResult.Failed ->
                                     fetchErr = r.reason
+                                is GpsocketClient.DownloadResult.NotConnected ->
+                                    fetchErr = context.getString(R.string.dl_err_not_connected)
                             }
                         }
                     } finally {

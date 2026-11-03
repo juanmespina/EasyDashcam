@@ -136,4 +136,15 @@ class GpsocketDownloadTest {
         val result = client.downloadFile(record(0x0e01, data), ByteArrayOutputStream(), timeoutMs = 500)
         assertEquals(DownloadResult.Incomplete(FakeCamera.CHUNK.toLong(), data.size.toLong()), result)
     }
+
+    @Test
+    fun `download while disconnected fails at once without sending anything`() = runBlocking {
+        client.disconnect()
+        val sentBefore = camera.received.size
+        val started = System.currentTimeMillis()
+        val result = client.downloadFile(record(0x0f01, clip(32, seed = 8)), ByteArrayOutputStream())
+        assertEquals(DownloadResult.NotConnected, result)
+        assertTrue("took ${System.currentTimeMillis() - started} ms", System.currentTimeMillis() - started < 1_000)
+        assertEquals(sentBefore, camera.received.size)
+    }
 }

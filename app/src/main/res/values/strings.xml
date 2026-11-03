@@ -145,6 +145,7 @@
     <string name="notif_download_failed">Download failed: %1$s</string>
     <string name="dl_err_no_dest">no destination</string>
     <string name="dl_err_cancelled">cancelled</string>
+    <string name="dl_err_not_connected">not connected to the camera</string>
     <string name="dl_err_refused">camera refused (still recording?)</string>
     <string name="dl_err_stalled">stalled at %1$d/%2$d B</string>
 

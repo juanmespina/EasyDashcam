@@ -122,7 +122,7 @@ class DownloadService : Service() {
                 // queuedIds lives from enqueue to finishFile — a second
                 // DOWNLOAD intent for an in-flight clip would write a
                 // duplicate MediaStore entry.
-                if (!queuedIds.add(f.uniqueId)) return START_STICKY
+                if (!queuedIds.add(f.uniqueId)) return START_NOT_STICKY
                 pending.incrementAndGet()
                 queue.trySend(f)
                 enqueued++
@@ -132,7 +132,7 @@ class DownloadService : Service() {
                 cancelled += intent.getIntExtra(EXTRA_ID, -1)
             }
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private fun ensureWorker() {
@@ -191,7 +191,10 @@ class DownloadService : Service() {
         var attemptsLeft = STALL_RETRIES
         while (true) {
             if (downloadAttempt(f, lastAttempt = attemptsLeft <= 0)) return
-            if (f.uniqueId in cancelled) return
+            if (f.uniqueId in cancelled) {
+                finishFile(f.uniqueId, error = getString(R.string.dl_err_cancelled))
+                return
+            }
             attemptsLeft--
             kotlinx.coroutines.delay(STALL_RETRY_DELAY_MS)
         }
@@ -315,6 +318,8 @@ class DownloadService : Service() {
             }
             is GpsocketClient.DownloadResult.Failed ->
                 failFile(dest, f.uniqueId, result.reason)
+            is GpsocketClient.DownloadResult.NotConnected ->
+                failFile(dest, f.uniqueId, getString(R.string.dl_err_not_connected))
         }
         return true
     }
