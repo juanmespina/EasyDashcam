@@ -1174,7 +1174,12 @@ private fun PlayerDialog(
                 if (remote != null && error == null && playable) {
                     IconButton(onClick = {
                         scope.launch {
-                            saved = vm.saveStreamed(remote, tmpFile!!, partial = !st.streamDone)
+                            // A stalled or failed stream is truncated even once it has ended.
+                            saved = vm.saveStreamed(
+                                remote,
+                                tmpFile!!,
+                                partial = st.transfer !is GpsocketClient.DownloadResult.Success
+                            )
                         }
                     }, enabled = !saved) {
                         Icon(

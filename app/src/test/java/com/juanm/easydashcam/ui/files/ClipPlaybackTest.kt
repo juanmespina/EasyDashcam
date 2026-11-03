@@ -53,7 +53,7 @@ class ClipPlaybackTest {
     }
 
     @Test
-    fun `normal playback progress does not re-seek audio`() {
+    fun `audioOutOfSync tolerates normal playback progress`() {
         // This camera: 30 fps video, 16 kHz mono audio in 6144-byte chunks
         // (192 ms). One chunk of playback moves video ~6 frames.
         assertFalse(audioOutOfSync(audioMs = 192, videoMs = 6 * 33))
@@ -61,7 +61,7 @@ class ClipPlaybackTest {
     }
 
     @Test
-    fun `a seek or a large drift re-seeks audio`() {
+    fun `audioOutOfSync flags a seek or a large drift`() {
         assertTrue(audioOutOfSync(audioMs = 1_000, videoMs = 3_000))
         assertTrue(audioOutOfSync(audioMs = 3_000, videoMs = 1_000))
         assertTrue(audioOutOfSync(audioMs = 10_000, videoMs = 10_250))

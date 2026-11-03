@@ -46,6 +46,8 @@ class ClipPlayback(
         val streamGot: Long = 0,
         val streamTotal: Long = 0,
         val streamDone: Boolean = false,
+        /** Outcome of a streamed clip's transfer, set together with [streamDone]. */
+        val transfer: DownloadResult? = null,
         val frameCount: Int = 0
     )
 
@@ -69,19 +71,20 @@ class ClipPlayback(
     @Suppress("TooGenericExceptionCaught")
     suspend fun run() = coroutineScope {
         try {
-            var transfer: DownloadResult? = null
-            if (fetch != null) launch(Dispatchers.IO) { transfer = fetchClip(fetch) }
-            if (!awaitPlayable { transfer }) return@coroutineScope
+            if (fetch != null) launch(Dispatchers.IO) { fetchClip(fetch) }
+            if (!awaitPlayable()) return@coroutineScope
             _state.update { it.copy(frameCount = player.frames.size, indexed = true) }
-            var audioTrack: AudioTrack? = null
-            val audioJob = launch { playAudio { audioTrack = it } }
+            val audioTrack = java.util.concurrent.atomic.AtomicReference<AudioTrack?>()
+            // IO, not the caller's Main: AudioTrack.write blocks for up to a
+            // buffer's worth of audio.
+            val audioJob = launch(Dispatchers.IO) { playAudio { audioTrack.set(it) } }
             try {
                 playVideo()
             } finally {
                 audioJob.cancel()
                 // Unblock a write() stuck on a full buffer — it doesn't
                 // observe cancellation, so it would delay the release.
-                audioTrack?.let { runCatching { it.stop() } }
+                audioTrack.get()?.let { runCatching { it.stop() } }
             }
         } catch (e: CancellationException) {
             throw e
@@ -91,10 +94,11 @@ class ClipPlayback(
         }
     }
 
-    private suspend fun fetchClip(fetch: suspend (onProgress: (Long, Long) -> Unit) -> DownloadResult): DownloadResult {
+    private suspend fun fetchClip(fetch: suspend (onProgress: (Long, Long) -> Unit) -> DownloadResult) {
         var lastMs = 0L
-        return try {
-            fetch { got, total ->
+        var result: DownloadResult? = null
+        try {
+            result = fetchOrFail(fetch) { got, total ->
                 val now = System.currentTimeMillis()
                 // Throttle: the callback fires per 32 KiB chunk.
                 if (now - lastMs >= 300 || got >= total) {
@@ -102,30 +106,29 @@ class ClipPlayback(
                     _state.update { it.copy(streamGot = got, streamTotal = total) }
                 }
             }
-        } catch (e: java.io.IOException) {
-            DownloadResult.Failed(e.message ?: e.javaClass.simpleName)
         } finally {
-            _state.update { it.copy(streamDone = true) }
+            // One update: whoever sees streamDone also sees the outcome.
+            _state.update { it.copy(streamDone = true, transfer = result) }
         }
     }
 
     /** Index what is playable; false (with [State.failure] set) when
      *  playback cannot start. */
-    private suspend fun awaitPlayable(transfer: () -> DownloadResult?): Boolean {
-        indexAvailable(transfer)
-        val failure = transferFailure(transfer()) ?: Failure.NoFrames.takeIf { player.frames.isEmpty() }
+    private suspend fun awaitPlayable(): Boolean {
+        indexAvailable()
+        val failure = transferFailure(_state.value.transfer) ?: Failure.NoFrames.takeIf { player.frames.isEmpty() }
         if (failure != null) _state.update { it.copy(failure = failure) }
         return failure == null
     }
 
     // Local clips index once. A photo is one JPEG, so it waits for the whole
     // transfer. A streamed video indexes as soon as its first frame arrives.
-    private suspend fun indexAvailable(transfer: () -> DownloadResult?) {
+    private suspend fun indexAvailable() {
         when {
             fetch == null -> player.index()
             isImage -> {
                 while (!_state.value.streamDone) delay(150)
-                if (transferFailure(transfer()) == null) player.index()
+                if (transferFailure(_state.value.transfer) == null) player.index()
             }
             else -> {
                 while (player.frames.isEmpty() && !_state.value.streamDone) {
@@ -161,6 +164,7 @@ class ClipPlayback(
                 // Paused: decode once after the slider moved, then idle.
                 s.paused && s.pos == lastDecoded -> 80L
                 else -> {
+                    val decodeStart = System.currentTimeMillis()
                     val bmp = player.frameAt(s.pos)
                     lastDecoded = s.pos
                     _state.update { it.copy(frame = bmp, buffering = false) }
@@ -169,7 +173,9 @@ class ClipPlayback(
                     } else {
                         // A seek during the decode wins over the advance.
                         _state.update { if (it.pos == s.pos) it.copy(pos = it.pos + 1) else it }
-                        player.frameMs
+                        // Count the decode against the frame interval, or
+                        // video runs slow and drifts from the audio clock.
+                        (player.frameMs - (System.currentTimeMillis() - decodeStart)).coerceAtLeast(0)
                     }
                 }
             }
@@ -268,3 +274,12 @@ private const val AUDIO_SYNC_TOLERANCE_MS = 200L
  *  the audio: after a user seek, or once decode time has let video drift. */
 internal fun audioOutOfSync(audioMs: Long, videoMs: Long): Boolean =
     kotlin.math.abs(audioMs - videoMs) > AUDIO_SYNC_TOLERANCE_MS
+
+private suspend fun fetchOrFail(
+    fetch: suspend (onProgress: (Long, Long) -> Unit) -> DownloadResult,
+    onProgress: (Long, Long) -> Unit
+): DownloadResult = try {
+    fetch(onProgress)
+} catch (e: java.io.IOException) {
+    DownloadResult.Failed(e.message ?: e.javaClass.simpleName)
+}
