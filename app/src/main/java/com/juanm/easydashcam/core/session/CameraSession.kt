@@ -111,10 +111,20 @@ class CameraSession(context: Context) {
         )
     }
 
+    // The hotspot is often announced before its addresses are ready, and the
+    // camera's server boots after its Wi-Fi: retry a few times instead of
+    // giving up on one early attempt.
     private fun maybeReconnect() {
         if (!hadConnection || userDisconnected) return
-        if (client.state.replayCache.firstOrNull() is GpsocketClient.State.Disconnected) {
-            scope.launch { runCatching { connect() } }
+        scope.launch {
+            repeat(RECONNECT_ATTEMPTS) {
+                val s = client.state.replayCache.firstOrNull()
+                if (userDisconnected || s is GpsocketClient.State.Connected || s is GpsocketClient.State.Connecting) {
+                    return@launch
+                }
+                runCatching { connect() }
+                kotlinx.coroutines.delay(RECONNECT_DELAY_MS)
+            }
         }
     }
 
@@ -147,3 +157,6 @@ class CameraSession(context: Context) {
         binder.unbind()
     }
 }
+
+private const val RECONNECT_ATTEMPTS = 3
+private const val RECONNECT_DELAY_MS = 3_000L
