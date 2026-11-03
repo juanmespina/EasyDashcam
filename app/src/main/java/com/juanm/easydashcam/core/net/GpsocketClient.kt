@@ -357,14 +357,9 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
             _frames.collect { if (it.cmd == cmd) ch.trySend(it) }
         }
         return try {
-            // Drop stragglers from earlier queries — param replies are
-            // positional, so a late reply would misalign every next value.
-            while (ch.tryReceive().isSuccess) {}
             send()
             val out = ArrayList<Frame>(count)
-            runCatching {
-                kotlinx.coroutines.withTimeout(timeoutMs) { repeat(count) { out += ch.receive() } }
-            }
+            kotlinx.coroutines.withTimeoutOrNull(timeoutMs) { repeat(count) { out += ch.receive() } }
             out
         } finally {
             job.cancel()
@@ -619,9 +614,7 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
             var received = 0L
             var result: DownloadResult = DownloadResult.Incomplete(0, expected)
             while (true) {
-                val f = runCatching {
-                    kotlinx.coroutines.withTimeout(timeoutMs) { ch.receive() }
-                }.getOrNull() ?: break // stall -> Incomplete
+                val f = kotlinx.coroutines.withTimeoutOrNull(timeoutMs) { ch.receive() } ?: break // stall -> Incomplete
                 if (f.type == 3) { // feff arg = refused
                     result = DownloadResult.Refused
                     break
@@ -698,15 +691,11 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
             )
 
     private suspend fun awaitCmd(ch: kotlinx.coroutines.channels.Channel<Frame>, cmd: Int, timeoutMs: Long): Frame? =
-        runCatching {
-            kotlinx.coroutines.withTimeout<Frame>(timeoutMs) {
-                while (true) {
-                    val f = ch.receive()
-                    if (f.cmd == cmd) return@withTimeout f
-                }
-                error("unreachable")
-            }
-        }.getOrNull()
+        kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
+            var f = ch.receive()
+            while (f.cmd != cmd) f = ch.receive()
+            f
+        }
 
     fun parseFileListPage(payload: ByteArray): List<CameraFile> {
         if (payload.isEmpty() || payload[0] != 0x10.toByte()) return emptyList()
@@ -741,7 +730,13 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
             sendParamQuery(id)
             delay(20) // Viidure paces queries by awaiting each reply
         }
-        runCatching { requestMenuXml() } // also caches into lastMenuXml
+        // Also caches into lastMenuXml. A refused or slow menu must not
+        // fail the session; cancellation of connect() must still propagate.
+        try {
+            requestMenuXml()
+        } catch (_: java.io.IOException) {
+        } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+        }
         sendTimeSync()
         writeBare(CMD_KEEPALIVE)
         sendParamQuery(0x9006)

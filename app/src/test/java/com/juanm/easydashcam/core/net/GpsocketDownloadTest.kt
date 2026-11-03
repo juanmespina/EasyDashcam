@@ -5,10 +5,13 @@ import com.juanm.easydashcam.core.net.GpsocketClient.DownloadResult
 import java.io.ByteArrayOutputStream
 import kotlin.concurrent.thread
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -104,5 +107,33 @@ class GpsocketDownloadTest {
         camera.files[0x0c01] = junk
         val result = client.downloadFile(record(0x0c01, junk), ByteArrayOutputStream())
         assertTrue(result.toString(), result is DownloadResult.Failed)
+    }
+
+    @Test
+    fun `cancelling the caller mid-transfer throws instead of returning a result`() = runBlocking {
+        val big = clip(1024, seed = 6)
+        serveSlowly(0x0d01, big)
+        var returned: DownloadResult? = null
+        val transfer = launch { returned = client.downloadFile(record(0x0d01, big), ByteArrayOutputStream()) }
+        while (camera.commands(GpsocketClient.CMD_DOWNLOAD).isEmpty()) delay(20)
+        delay(200)
+        transfer.cancel()
+        transfer.join()
+        // The caller's next line must not run with a made-up Incomplete.
+        assertNull(returned)
+    }
+
+    @Test
+    fun `a stream that stops without a terminator is Incomplete`() = runBlocking {
+        val data = clip(96, seed = 7)
+        camera.onCommand = { cmd, body ->
+            if (cmd == GpsocketClient.CMD_DOWNLOAD) {
+                camera.reply(cmd, data.copyOfRange(0, FakeCamera.CHUNK))
+            } else {
+                camera.defaultReply(cmd, body)
+            }
+        }
+        val result = client.downloadFile(record(0x0e01, data), ByteArrayOutputStream(), timeoutMs = 500)
+        assertEquals(DownloadResult.Incomplete(FakeCamera.CHUNK.toLong(), data.size.toLong()), result)
     }
 }
