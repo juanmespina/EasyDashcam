@@ -69,6 +69,12 @@ android {
         disable += "ObsoleteSdkInt"
     }
 
+    testOptions {
+        // android.util.Log (via DebugLogger) is a stub on the JVM — return
+        // defaults instead of throwing so protocol code is unit-testable.
+        unitTests.isReturnDefaultValues = true
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -78,6 +84,7 @@ android {
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
+        allWarningsAsErrors.set(true)
     }
 }
 

@@ -64,6 +64,8 @@ class DownloadService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val queue = Channel<GpsocketClient.CameraFile>(Channel.UNLIMITED)
+    /** Items sent to [queue] and not yet received — Channel.isEmpty is experimental. */
+    private val pending = java.util.concurrent.atomic.AtomicInteger(0)
     private val cancelled = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
     /** uniqueIds from enqueue until finishFile — rejects duplicate downloads. */
     private val queuedIds = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
@@ -111,6 +113,7 @@ class DownloadService : Service() {
                 // DOWNLOAD intent for an in-flight clip would write a
                 // duplicate MediaStore entry.
                 if (!queuedIds.add(f.uniqueId)) return START_STICKY
+                pending.incrementAndGet()
                 queue.trySend(f)
                 enqueued++
                 ensureWorker()
@@ -141,6 +144,7 @@ class DownloadService : Service() {
                     val f = kotlinx.coroutines.withTimeoutOrNull(IDLE_SHUTDOWN_MS) {
                         queue.receive()
                     } ?: break
+                    pending.decrementAndGet()
                     if (f.uniqueId in cancelled) {
                         finishFile(f.uniqueId, error = getString(R.string.dl_err_cancelled))
                         continue
@@ -155,7 +159,7 @@ class DownloadService : Service() {
             // check and stopSelfResult, which itself no-ops if a newer start
             // request arrived.
             kotlinx.coroutines.withContext(Dispatchers.Main.immediate) {
-                if (queue.isEmpty) {
+                if (pending.get() == 0) {
                     worker = false
                     enqueued = 0
                     finished = 0

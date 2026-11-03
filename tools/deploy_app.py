@@ -1,7 +1,5 @@
 """One-command dev loop: build -> install -> launch (optionally --logcat)."""
-import glob
 import os
-import shutil
 import subprocess
 import sys
 
@@ -15,21 +13,13 @@ PKG = 'com.juanm.easydashcam'
 
 
 def find_gradle():
-    on_path = shutil.which('gradle')
-    if on_path:
-        return on_path
-    pat = os.path.expandvars(
-        r'%USERPROFILE%\.gradle\wrapper\dists\gradle-8.9-bin\*\gradle-8.9\bin\gradle.bat')
-    hits = glob.glob(pat)
-    if not hits:
-        sys.exit('Gradle 8.9 not found — install it or add gradle to PATH')
-    return hits[0]
+    return os.path.join(PROJ, 'gradlew.bat' if os.name == 'nt' else 'gradlew')
 
 
 def run(cmd, cwd=None, env=None, tail=2500, timeout=None):
     print('$', ' '.join(cmd))
     r = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True,
-                       text=True, timeout=timeout)
+                       text=True, timeout=timeout, check=False)
     out = (r.stdout or '') + (r.stderr or '')
     print(out[-tail:])
     return r.returncode
@@ -49,7 +39,7 @@ def build():
 
 
 def install_and_launch():
-    r = subprocess.run([ADB, 'devices'], capture_output=True, text=True)
+    r = subprocess.run([ADB, "devices"], capture_output=True, text=True, check=False)
     online = [l.split()[0] for l in r.stdout.splitlines()[1:]
               if l.strip().endswith('device')]
     if not online:
