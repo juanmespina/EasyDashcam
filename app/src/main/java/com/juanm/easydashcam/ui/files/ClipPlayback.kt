@@ -192,12 +192,15 @@ class ClipPlayback(
         }
     }
 
-    // PCM chunks feed a self-clocking AudioTrack; seeks move the PCM read
-    // position to match the video frame time.
+    // PCM chunks feed a self-clocking AudioTrack. Audio is re-seeked to the
+    // video time only when the two drift apart: one 6 KiB write is ~190 ms
+    // of this camera's audio, during which video moves ~6 frames, so a
+    // "next frame" check fired on almost every write and flushed the sound.
     private suspend fun CoroutineScope.feedAudio(track: AudioTrack) {
         val buf = ByteArray(8192)
         var bytePos = 0L
-        var lastVideoPos = -1
+        var syncedAtMs = 0L
+        var synced = false
         var streaming = false
         while (isActive) {
             val s = _state.value
@@ -208,13 +211,18 @@ class ClipPlayback(
             } else {
                 if (!streaming) track.play()
                 streaming = true
-                if (s.pos != lastVideoPos + 1) { // seek or restart
-                    bytePos = player.audioPosForMs(s.pos * player.frameMs)
+                val videoMs = s.pos * player.frameMs
+                // Frames actually played since the last flush — bytes written
+                // run ahead of what is audible by the track's buffer.
+                val audioMs = syncedAtMs + track.playbackHeadPosition * 1000L / player.audioRate.coerceAtLeast(1)
+                if (!synced || audioOutOfSync(audioMs, videoMs)) {
+                    bytePos = player.audioPosForMs(videoMs)
+                    syncedAtMs = videoMs
+                    synced = true
                     track.pause()
                     track.flush()
                     track.play()
                 }
-                lastVideoPos = s.pos
                 val n = player.audioRead(bytePos, buf)
                 if (n > 0) {
                     bytePos += n
@@ -247,3 +255,11 @@ private fun newAudioTrack(rate: Int, channels: Int): AudioTrack = AudioTrack.Bui
 
 private fun transferFailure(result: DownloadResult?): ClipPlayback.Failure? =
     result?.takeIf { it !is DownloadResult.Success }?.let { ClipPlayback.Failure.Transfer(it) }
+
+/** Audio and video may differ by this much before audio is re-seeked. */
+private const val AUDIO_SYNC_TOLERANCE_MS = 200L
+
+/** True when played audio and shown video are far enough apart to re-seek
+ *  the audio: after a user seek, or once decode time has let video drift. */
+internal fun audioOutOfSync(audioMs: Long, videoMs: Long): Boolean =
+    kotlin.math.abs(audioMs - videoMs) > AUDIO_SYNC_TOLERANCE_MS
