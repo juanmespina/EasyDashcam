@@ -293,4 +293,26 @@ class AviMjpegPlayerTest {
             assertEquals(128L, p.audioByteLen)
         }
     }
+
+    @Test
+    fun `frame time follows the audio when the camera stores fewer frames than it declares`() = runBlocking {
+        // 30 fps declared, 10 frames stored, 1 s of 16 kHz mono audio.
+        val p = playerFor(
+            buildAvi(
+                avihUsec = 33_333,
+                frames = (1..10).map { jpeg(it) },
+                audioChunks = listOf(ByteArray(16_000), ByteArray(16_000))
+            )
+        )
+        p.index()
+        assertEquals(100L, p.frameMs)
+        assertEquals(1.0, p.durationSec, 0.001)
+    }
+
+    @Test
+    fun `without audio, frame time spreads the header duration over the stored frames`() = runBlocking {
+        val p = playerFor(buildAvi(avihUsec = 33_333, totalFrames = 23, frames = (1..10).map { jpeg(it) }))
+        p.index()
+        assertEquals(76L, p.frameMs)
+    }
 }

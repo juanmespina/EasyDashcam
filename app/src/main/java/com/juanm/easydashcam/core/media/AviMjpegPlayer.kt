@@ -224,8 +224,27 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
         }
         if (thumbFrame == null) thumbFrame = videoRefs.firstOrNull()
         if (totalFrames > 0) probeDurationSec = totalFrames * usecPerFrame / 1e6
-        if (videoRefs.isNotEmpty()) frameMs = (usecPerFrame / 1000).coerceIn(1, 500)
+        if (videoRefs.isNotEmpty()) frameMs = storedFrameMs().coerceIn(1, 500)
         added
+    }
+
+    /**
+     * Time each stored frame stands for. This camera declares 30 fps but
+     * writes ~12-13 frames per second (a 22.3 s clip holds 299 frames, not
+     * the 668 its header counts), so the header interval plays video at
+     * ~2.2x and ends it early. Spread the real duration over the frames
+     * actually stored: the audio indexed so far when there is audio (it is
+     * interleaved, so this also holds mid-stream), else the header's
+     * duration once the whole file is indexed.
+     */
+    private fun storedFrameMs(): Long {
+        val frames = videoRefs.size
+        val audioMs = if (audioBytesPerSec > 0) audio.byteLen * 1000 / audioBytesPerSec else 0
+        return when {
+            audioMs > 0 -> audioMs / frames
+            fullyIndexed && totalFrames > frames -> totalFrames * usecPerFrame / 1000 / frames
+            else -> usecPerFrame / 1000
+        }
     }
 
     /** Decode frame [i]; null when the JPEG is corrupt. Safe to call from IO. */
