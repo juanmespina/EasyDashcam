@@ -66,8 +66,9 @@ class CameraSession(context: Context) {
     fun setAutoDownload(on: Boolean) {
         // Re-enabling after a gap re-bases the watermark — otherwise every
         // clip recorded while it was off would queue as "new" all at once.
-        if (on && !_autoDownload.value)
+        if (on && !_autoDownload.value) {
             autoSyncWatermark = java.time.LocalDateTime.now()
+        }
         prefs.edit().putBoolean("auto_download", on).apply()
         _autoDownload.value = on
     }
@@ -75,7 +76,9 @@ class CameraSession(context: Context) {
     var autoSyncWatermark: java.time.LocalDateTime?
         get() = prefs.getString("auto_ts", null)
             ?.let { runCatching { java.time.LocalDateTime.parse(it) }.getOrNull() }
-        set(v) { prefs.edit().putString("auto_ts", v?.toString()).apply() }
+        set(v) {
+            prefs.edit().putString("auto_ts", v?.toString()).apply()
+        }
 
     // Auto-reconnect: once a connection succeeded, a Wi-Fi network coming back
     // (camera rebooted, hotspot re-joined) re-arms the socket — unless the user
@@ -124,7 +127,8 @@ class CameraSession(context: Context) {
         for (host in listOf(gateway, GpsocketClient.CAMERA_HOST).distinct()) {
             client.connect(host)
             if (client.state.replayCache.firstOrNull()
-                    is GpsocketClient.State.Connected) {
+                    is GpsocketClient.State.Connected
+            ) {
                 _cameraHost.value = host
                 break
             }

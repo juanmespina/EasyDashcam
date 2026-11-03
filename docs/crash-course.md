@@ -9,8 +9,8 @@ A beginner's tour of everything this project is built from, using the exact file
 ```
 Your taps                     The app                              The camera
 ─────────                     ────────                             ──────────
-   │                                                               
-   ▼                                                               
+   │
+   ▼
 ┌─────────┐   state (StateFlow)  ┌──────────────┐   TCP socket   ┌──────────┐
 │ Compose │ ◄─────────────────── │ CameraView-  │ ◄────────────► │ dashcam  │
 │   UI    │   render on change   │   Model      │  bytes over    │          │

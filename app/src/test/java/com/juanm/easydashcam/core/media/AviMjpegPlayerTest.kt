@@ -1,21 +1,20 @@
 package com.juanm.easydashcam.core.media
 
-import kotlinx.coroutines.runBlocking
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Test
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
 
 class AviMjpegPlayerTest {
 
     // ---- synthetic AVI builder -------------------------------------------------
 
-    private fun le32(v: Int): ByteArray =
-        ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(v).array()
+    private fun le32(v: Int): ByteArray = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(v).array()
 
     private fun le16(v: Int): ByteArray =
         ByteBuffer.allocate(2).order(ByteOrder.LITTLE_ENDIAN).putShort(v.toShort()).array()
@@ -23,8 +22,10 @@ class AviMjpegPlayerTest {
     private fun fourcc(s: String) = s.toByteArray(Charsets.US_ASCII)
 
     private fun ByteArrayOutputStream.chunk(id: String, body: ByteArray) {
-        write(fourcc(id)); write(le32(body.size)); write(body)
-        if (body.size and 1 == 1) write(0)   // RIFF word-aligns odd sizes
+        write(fourcc(id))
+        write(le32(body.size))
+        write(body)
+        if (body.size and 1 == 1) write(0) // RIFF word-aligns odd sizes
     }
 
     private fun listChunk(type: String, body: ByteArray): ByteArray {
@@ -33,10 +34,9 @@ class AviMjpegPlayerTest {
         return b.toByteArray()
     }
 
-    private fun jpeg(seed: Int): ByteArray =
-        byteArrayOf(0xFF.toByte(), 0xD8.toByte()) +
-            ByteArray(seed % 7 + 4) { it.toByte() } +
-            byteArrayOf(0xFF.toByte(), 0xD9.toByte())
+    private fun jpeg(seed: Int): ByteArray = byteArrayOf(0xFF.toByte(), 0xD8.toByte()) +
+        ByteArray(seed % 7 + 4) { it.toByte() } +
+        byteArrayOf(0xFF.toByte(), 0xD9.toByte())
 
     private fun buildAvi(
         avihUsec: Int = 200_000,
@@ -46,7 +46,7 @@ class AviMjpegPlayerTest {
         audioChunks: List<ByteArray> = emptyList(),
         audioRate: Int = 16000,
         audioStrhRate: Int = 0,
-        totalFrames: Int = 0,
+        totalFrames: Int = 0
     ): ByteArray {
         val out = ByteArrayOutputStream()
 
@@ -84,7 +84,9 @@ class AviMjpegPlayerTest {
         out.chunk("idx1", ByteArray(32))
 
         val riff = ByteArrayOutputStream()
-        riff.write(fourcc("RIFF")); riff.write(le32(out.size() + 4)); riff.write(fourcc("AVI "))
+        riff.write(fourcc("RIFF"))
+        riff.write(le32(out.size() + 4))
+        riff.write(fourcc("AVI "))
         riff.write(out.toByteArray())
         return riff.toByteArray()
     }
@@ -109,10 +111,16 @@ class AviMjpegPlayerTest {
 
     @Test
     fun `strh rate wins over avih`() = runBlocking {
-        val p = playerFor(buildAvi(avihUsec = 200_000, strhScale = 1, strhRate = 30,
-            frames = listOf(jpeg(1))))
+        val p = playerFor(
+            buildAvi(
+                avihUsec = 200_000,
+                strhScale = 1,
+                strhRate = 30,
+                frames = listOf(jpeg(1))
+            )
+        )
         p.index()
-        assertEquals(33L, p.frameMs)   // 1/30 s, not avih's 200 ms
+        assertEquals(33L, p.frameMs) // 1/30 s, not avih's 200 ms
         p.close()
     }
 
@@ -169,8 +177,12 @@ class AviMjpegPlayerTest {
     @Test
     fun `audio stream is indexed with format`() = runBlocking {
         val pcm = ByteArray(4) { 7 } + ByteArray(4) { 9 }
-        val p = playerFor(buildAvi(frames = listOf(jpeg(1)),
-            audioChunks = listOf(pcm.copyOfRange(0, 4), pcm.copyOfRange(4, 8))))
+        val p = playerFor(
+            buildAvi(
+                frames = listOf(jpeg(1)),
+                audioChunks = listOf(pcm.copyOfRange(0, 4), pcm.copyOfRange(4, 8))
+            )
+        )
         p.index()
         assertEquals(2, p.audioRefs.size)
         assertEquals(16000, p.audioRate)
@@ -185,9 +197,15 @@ class AviMjpegPlayerTest {
     fun `audio strh does not clobber video timing`() = runBlocking {
         // auds strh rate 32000 would give ~31µs/frame if it overwrote the
         // video stream's 1/30 timing.
-        val p = playerFor(buildAvi(strhScale = 1, strhRate = 30,
-            frames = listOf(jpeg(1)),
-            audioChunks = listOf(ByteArray(8)), audioStrhRate = 32000))
+        val p = playerFor(
+            buildAvi(
+                strhScale = 1,
+                strhRate = 30,
+                frames = listOf(jpeg(1)),
+                audioChunks = listOf(ByteArray(8)),
+                audioStrhRate = 32000
+            )
+        )
         p.index()
         assertEquals(33L, p.frameMs)
         p.close()
@@ -195,15 +213,19 @@ class AviMjpegPlayerTest {
 
     @Test
     fun `audioRead serves pcm across chunk boundaries`() = runBlocking {
-        val p = playerFor(buildAvi(frames = listOf(jpeg(1)),
-            audioChunks = listOf(byteArrayOf(1, 2, 3, 4), byteArrayOf(5, 6, 7, 8))))
+        val p = playerFor(
+            buildAvi(
+                frames = listOf(jpeg(1)),
+                audioChunks = listOf(byteArrayOf(1, 2, 3, 4), byteArrayOf(5, 6, 7, 8))
+            )
+        )
         p.index()
         val buf = ByteArray(3)
         assertEquals(3, p.audioRead(0, buf))
         assert(byteArrayOf(1, 2, 3).contentEquals(buf))
-        assertEquals(1, p.audioRead(3, buf))   // stops at the chunk boundary…
+        assertEquals(1, p.audioRead(3, buf)) // stops at the chunk boundary…
         assertEquals(4, buf[0].toInt())
-        assertEquals(3, p.audioRead(4, buf))   // …caller's next read crosses it
+        assertEquals(3, p.audioRead(4, buf)) // …caller's next read crosses it
         assert(byteArrayOf(5, 6, 7).contentEquals(buf))
         assertEquals(-1, p.audioRead(8, buf))
         p.close()
@@ -211,10 +233,14 @@ class AviMjpegPlayerTest {
 
     @Test
     fun `audioPosForMs is linear for pcm`() = runBlocking {
-        val p = playerFor(buildAvi(frames = listOf(jpeg(1)),
-            audioChunks = listOf(ByteArray(64))))
+        val p = playerFor(
+            buildAvi(
+                frames = listOf(jpeg(1)),
+                audioChunks = listOf(ByteArray(64))
+            )
+        )
         p.index()
-        assertEquals(32L, p.audioPosForMs(1))   // 1 ms = 32 B @ 32 000 B/s
+        assertEquals(32L, p.audioPosForMs(1)) // 1 ms = 32 B @ 32 000 B/s
         // A position past the audio end clamps to the stream length.
         assertEquals(p.audioByteLen, p.audioPosForMs(999_999))
         p.close()
@@ -222,8 +248,13 @@ class AviMjpegPlayerTest {
 
     @Test
     fun `probe reads duration and first frame without indexing`() = runBlocking {
-        val p = playerFor(buildAvi(avihUsec = 200_000, totalFrames = 30,
-            frames = listOf(jpeg(1), jpeg(2), jpeg(3))))
+        val p = playerFor(
+            buildAvi(
+                avihUsec = 200_000,
+                totalFrames = 30,
+                frames = listOf(jpeg(1), jpeg(2), jpeg(3))
+            )
+        )
         p.probe()
         assertEquals(6.0, p.probeDurationSec!!, 0.01)
         assert(p.thumbFrame != null)
@@ -254,8 +285,13 @@ class AviMjpegPlayerTest {
     fun `extendIndex resumes where a truncated scan stopped`() = runBlocking {
         // Simulate a streaming download: the file arrives in pieces and each
         // pass must index only newly complete chunks.
-        val avi = buildAvi(frames = listOf(
-            ByteArray(500) { 1 }, ByteArray(500) { 2 }, ByteArray(500) { 3 }))
+        val avi = buildAvi(
+            frames = listOf(
+                ByteArray(500) { 1 },
+                ByteArray(500) { 2 },
+                ByteArray(500) { 3 }
+            )
+        )
         val f = File.createTempFile("avi-stream", ".bin")
         f.deleteOnExit()
         val writer = RandomAccessFile(f, "rw")
@@ -292,8 +328,12 @@ class AviMjpegPlayerTest {
     fun `reads on a closed channel return empty instead of throwing`() = runBlocking {
         // close() can race an in-flight audioRead/frameAt on another
         // coroutine — a dead channel must read as "no data", not crash.
-        val p = playerFor(buildAvi(frames = listOf(jpeg(1)),
-            audioChunks = listOf(ByteArray(4))))
+        val p = playerFor(
+            buildAvi(
+                frames = listOf(jpeg(1)),
+                audioChunks = listOf(ByteArray(4))
+            )
+        )
         p.index()
         p.close()
         assertNull(p.frameAt(0))

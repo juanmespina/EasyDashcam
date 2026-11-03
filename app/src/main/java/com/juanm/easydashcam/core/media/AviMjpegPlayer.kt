@@ -2,12 +2,12 @@ package com.juanm.easydashcam.core.media
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import java.io.Closeable
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.channels.FileChannel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Minimal RIFF/AVI + Motion-JPEG player for downloaded camera clips.
@@ -109,22 +109,28 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
     private suspend fun scan(stopAfterFirstFrame: Boolean): Int = withContext(Dispatchers.IO) {
         val size = ch.size()
         if (!headerDone) {
-            if (size < 4) return@withContext 0   // magic still in flight
+            if (size < 4) return@withContext 0 // magic still in flight
             val magic = readBytesAt(0, 4) ?: return@withContext 0
 
             // Raw JPEG payload (photo records): no RIFF wrapper.
             if (magic[0] == 0xFF.toByte() && magic[1] == 0xD8.toByte()) {
                 thumbFrame = FrameRef(0, size.toInt())
-                if (!stopAfterFirstFrame) { frames = listOf(thumbFrame!!); frameMs = 0 }
+                if (!stopAfterFirstFrame) {
+                    frames = listOf(thumbFrame!!)
+                    frameMs = 0
+                }
                 headerDone = true
                 fullyIndexed = true
                 return@withContext 1
             }
             if (!magic.contentEquals("RIFF".toByteArray())) throw AviException("not RIFF/AVI")
-            if (size < 12) return@withContext 0   // rest of RIFF header in flight
+            if (size < 12) return@withContext 0 // rest of RIFF header in flight
             riffSize = u32le(readBytesAt(4, 4) ?: return@withContext 0) + 8
             if (!(readBytesAt(8, 4) ?: return@withContext 0)
-                    .contentEquals("AVI ".toByteArray())) throw AviException("not AVI")
+                    .contentEquals("AVI ".toByteArray())
+            ) {
+                throw AviException("not AVI")
+            }
             scanPos = 12
             headerDone = true
         }
@@ -134,7 +140,7 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
             val hdr = readBytesAt(scanPos, 8) ?: break
             val id = hdr.copyOfRange(0, 4)
             val len = u32le(hdr, 4)
-            val chunkEnd = scanPos + 8 + len + (len and 1)   // RIFF word-aligns odd sizes
+            val chunkEnd = scanPos + 8 + len + (len and 1) // RIFF word-aligns odd sizes
             val content = scanPos + 8
             val isList = id.contentEquals("LIST".toByteArray())
             // A LIST only needs its 4-byte subtype present — the walk
@@ -170,7 +176,8 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
                     streamIsAudio = body != null &&
                         body.copyOfRange(0, 4).contentEquals("auds".toByteArray())
                     if (body != null && !streamIsAudio && len >= 28) {
-                        val scale = u32le(body, 20); val rate = u32le(body, 24)
+                        val scale = u32le(body, 20)
+                        val rate = u32le(body, 24)
                         if (rate > 0) usecPerFrame = scale * 1_000_000 / rate
                     }
                     scanPos = chunkEnd
@@ -180,7 +187,7 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
                     val body = if (len >= 10) readBytesAt(content, len.coerceAtMost(16).toInt()) else null
                     if (streamIsAudio && body != null) {
                         val tag = (body[0].toInt() and 0xFF) or (body[1].toInt() and 0xFF shl 8)
-                        if (tag == 1) {   // PCM — anything else can't go to AudioTrack
+                        if (tag == 1) { // PCM — anything else can't go to AudioTrack
                             audioChannels = body[2].toInt() and 0xFF
                             audioRate = u32le(body, 4).toInt()
                             audioBytesPerSec = u32le(body, 8)
@@ -192,7 +199,7 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
                     videoRefs += FrameRef(content, len.toInt())
                     added++
                     scanPos = chunkEnd
-                    if (stopAfterFirstFrame) break   // probe: first frame is enough
+                    if (stopAfterFirstFrame) break // probe: first frame is enough
                 }
                 inMovi && isAudioChunk(id) -> {
                     audioRefsFound += FrameRef(content, len.toInt())
@@ -200,7 +207,10 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
                 }
                 else -> scanPos = chunkEnd
             }
-            if (inMovi && scanPos >= moviEnd) { fullyIndexed = true; break }
+            if (inMovi && scanPos >= moviEnd) {
+                fullyIndexed = true
+                break
+            }
         }
         if (scanPos >= riffSize) fullyIndexed = true
         if (!stopAfterFirstFrame) {
@@ -216,7 +226,10 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
         if (audioStarts.size != audioRefsFound.size) {
             audioStarts = LongArray(audioRefsFound.size)
             var acc = 0L
-            audioRefsFound.forEachIndexed { i, r -> audioStarts[i] = acc; acc += r.length }
+            audioRefsFound.forEachIndexed { i, r ->
+                audioStarts[i] = acc
+                acc += r.length
+            }
             audioByteLen = acc
         }
         added
@@ -237,14 +250,17 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
         BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, bounds)
         var sample = 1
         while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxDim) sample *= 2
-        BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size,
-            BitmapFactory.Options().apply { inSampleSize = sample })
+        BitmapFactory.decodeByteArray(
+            jpeg,
+            0,
+            jpeg.size,
+            BitmapFactory.Options().apply { inSampleSize = sample }
+        )
     }
 
     /** Byte offset in the concatenated PCM stream for time [ms] — PCM is
      *  constant-rate, so seeking is linear. */
-    fun audioPosForMs(ms: Long): Long =
-        (ms * audioBytesPerSec / 1000).coerceIn(0, audioByteLen)
+    fun audioPosForMs(ms: Long): Long = (ms * audioBytesPerSec / 1000).coerceIn(0, audioByteLen)
 
     /**
      * Read up to [len] bytes of PCM at stream offset [pos] into [out].
@@ -275,8 +291,7 @@ class AviMjpegPlayer(private val ch: FileChannel) : Closeable {
     private fun isVideoChunk(id: ByteArray) =
         id[2] == 'd'.code.toByte() && (id[3] == 'c'.code.toByte() || id[3] == 'b'.code.toByte())
 
-    private fun isAudioChunk(id: ByteArray) =
-        id[2] == 'w'.code.toByte() && id[3] == 'b'.code.toByte()
+    private fun isAudioChunk(id: ByteArray) = id[2] == 'w'.code.toByte() && id[3] == 'b'.code.toByte()
 
     /** Positional read — doesn't touch the channel's file position, so the
      *  video decode loop and the audio feeder can share [ch] without a lock.

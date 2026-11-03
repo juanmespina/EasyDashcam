@@ -47,11 +47,17 @@ class CameraNetworkBinder(context: Context) {
         // gateway int is little-endian.
         @Suppress("DEPRECATION")
         val wm = appContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+
         @Suppress("DEPRECATION")
         val gw = wm.dhcpInfo.gateway
         if (gw == 0) return null
-        return InetAddress.getByAddress(byteArrayOf(
-            gw.toByte(), (gw shr 8).toByte(), (gw shr 16).toByte(), (gw shr 24).toByte()
-        )).hostAddress
+        return InetAddress.getByAddress(
+            byteArrayOf(
+                gw.toByte(),
+                (gw shr 8).toByte(),
+                (gw shr 16).toByte(),
+                (gw shr 24).toByte()
+            )
+        ).hostAddress
     }
 }

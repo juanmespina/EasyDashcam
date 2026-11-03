@@ -83,8 +83,10 @@ fun AppRoot(vm: CameraViewModel = viewModel()) {
                 actions = {
                     Box {
                         IconButton(onClick = { menuOpen = true }) {
-                            Icon(Icons.Default.MoreVert,
-                                contentDescription = stringResource(R.string.menu_overflow))
+                            Icon(
+                                Icons.Default.MoreVert,
+                                contentDescription = stringResource(R.string.menu_overflow)
+                            )
                         }
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                             if (BuildConfig.DEBUG) {
@@ -121,8 +123,10 @@ fun AppRoot(vm: CameraViewModel = viewModel()) {
                             }
                         },
                         icon = {
-                            Icon(dest.icon,
-                                contentDescription = stringResource(dest.labelRes))
+                            Icon(
+                                dest.icon,
+                                contentDescription = stringResource(dest.labelRes)
+                            )
                         },
                         label = { Text(stringResource(dest.labelRes)) }
                     )

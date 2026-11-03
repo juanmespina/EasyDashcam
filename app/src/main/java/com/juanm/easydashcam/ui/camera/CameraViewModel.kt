@@ -52,6 +52,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     /** uniqueId → MediaStore uri for files already on the phone. */
     private val _localFiles = MutableStateFlow<Map<Int, Uri>>(emptyMap())
     val localFiles: StateFlow<Map<Int, Uri>> = _localFiles
+
     /** uniqueIds whose local file is a truncated partial-stream save. */
     private val _partialLocal = MutableStateFlow<Set<Int>>(emptySet())
     val partialLocal: StateFlow<Set<Int>> = _partialLocal
@@ -103,7 +104,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                     settingsLoadedAt = 0
                     _settings.value = null
                     session.clearDownloads()
-                    restorePersistedFiles()   // show last-known list while refetching
+                    restorePersistedFiles() // show last-known list while refetching
                 }
             }
         }
@@ -152,7 +153,8 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                     val p = line.split('|')
                     if (p.size < 4) return@mapNotNull null
                     GpsocketClient.CameraFile(
-                        kind = p[0].toInt(), id = p[1].toInt(),
+                        kind = p[0].toInt(),
+                        id = p[1].toInt(),
                         timestamp = p[2].takeIf { it.isNotEmpty() }
                             ?.let { runCatching { java.time.LocalDateTime.parse(it) }.getOrNull() },
                         size = p[3].toLong()
@@ -191,11 +193,14 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 )) {
                     getApplication<Application>().contentResolver.query(
                         collection,
-                        arrayOf(MediaStore.MediaColumns._ID,
-                            MediaStore.MediaColumns.DISPLAY_NAME),
+                        arrayOf(
+                            MediaStore.MediaColumns._ID,
+                            MediaStore.MediaColumns.DISPLAY_NAME
+                        ),
                         "(${MediaStore.MediaColumns.RELATIVE_PATH} LIKE 'Movies/EasyDashcam/%'" +
                             " OR ${MediaStore.MediaColumns.RELATIVE_PATH} LIKE 'Pictures/EasyDashcam/%')",
-                        null, null
+                        null,
+                        null
                     )?.use { c ->
                         val idCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
                         val nameCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
@@ -227,7 +232,8 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             if (!session.connect()) {
                 _state.value = GpsocketClient.State.Error(
                     IllegalStateException(
-                        getApplication<Application>().getString(R.string.err_no_wifi))
+                        getApplication<Application>().getString(R.string.err_no_wifi)
+                    )
                 )
             }
         }
@@ -249,8 +255,12 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refreshFiles(force: Boolean = false) {
         if (_filesLoading.value) return
-        if (!force && _files.value != null &&
-            System.currentTimeMillis() - filesFetchedAt < 30_000) return
+        if (!force &&
+            _files.value != null &&
+            System.currentTimeMillis() - filesFetchedAt < 30_000
+        ) {
+            return
+        }
         viewModelScope.launch {
             _filesLoading.value = true
             runCatching { client.listFiles() }
@@ -266,8 +276,10 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                     // cache still lists every record the camera last served,
                     // and On device matches it against MediaStore copies.
                     if (_files.value == null) restorePersistedFiles()
-                    notice(getApplication<Application>()
-                        .getString(R.string.notice_file_list_failed, it.message))
+                    notice(
+                        getApplication<Application>()
+                            .getString(R.string.notice_file_list_failed, it.message)
+                    )
                 }
             _filesLoading.value = false
         }
@@ -279,8 +291,11 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             val rows = runCatching {
                 getApplication<Application>().contentResolver.delete(uri, null, null)
             }.getOrDefault(0)
-            notice(getApplication<Application>().getString(
-                if (rows > 0) R.string.notice_deleted else R.string.notice_delete_failed))
+            notice(
+                getApplication<Application>().getString(
+                    if (rows > 0) R.string.notice_deleted else R.string.notice_delete_failed
+                )
+            )
             refreshLocalFiles()
         }
     }
@@ -292,16 +307,22 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         if (prev != null && !(prev.done && prev.error != null)) return
         // Mark queued immediately — otherwise the intent is in flight for a
         // while and the row still shows Download, inviting a duplicate queue.
-        session.updateDownload(f.uniqueId,
-            CameraSession.DownloadState(0, f.sizeBytes))
+        session.updateDownload(
+            f.uniqueId,
+            CameraSession.DownloadState(0, f.sizeBytes)
+        )
         runCatching {
             ContextCompat.startForegroundService(
-                getApplication(), DownloadService.downloadIntent(getApplication(), f))
+                getApplication(),
+                DownloadService.downloadIntent(getApplication(), f)
+            )
         }.onFailure {
             // Queued marker would otherwise show a spinner forever.
             session.removeDownload(f.uniqueId)
-            notice(getApplication<Application>()
-                .getString(R.string.notice_file_list_failed, it.message))
+            notice(
+                getApplication<Application>()
+                    .getString(R.string.notice_file_list_failed, it.message)
+            )
         }
     }
 
@@ -322,17 +343,14 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         f: GpsocketClient.CameraFile,
         out: java.io.OutputStream,
         onProgress: (Long, Long) -> Unit
-    ): GpsocketClient.DownloadResult =
-        client.downloadFile(f, out, onProgress = onProgress)
+    ): GpsocketClient.DownloadResult = client.downloadFile(f, out, onProgress = onProgress)
 
     /**
      * Adopt a streamed temp file into the gallery — the bytes are
      * already local, so saving is a copy, not a re-download. A partial
      * stream saves a truncated (still playable) AVI under a marked name.
      */
-    suspend fun saveStreamed(
-        f: GpsocketClient.CameraFile, src: java.io.File, partial: Boolean = false
-    ): Boolean =
+    suspend fun saveStreamed(f: GpsocketClient.CameraFile, src: java.io.File, partial: Boolean = false): Boolean =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             runCatching {
                 val dest = ClipStore.open(getApplication(), f, partial)
@@ -342,8 +360,10 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 val isJpeg = head[0] == 0xFF.toByte() && head[1] == 0xD8.toByte()
                 dest.out.use { o -> src.inputStream().use { it.copyTo(o) } }
                 ClipStore.commit(getApplication(), dest, isJpeg)
-                session.updateDownload(f.uniqueId,
-                    CameraSession.DownloadState(src.length(), src.length(), done = true))
+                session.updateDownload(
+                    f.uniqueId,
+                    CameraSession.DownloadState(src.length(), src.length(), done = true)
+                )
                 refreshLocalFiles()
                 true
             }.getOrDefault(false)
@@ -352,9 +372,11 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     private fun persistFiles(files: List<GpsocketClient.CameraFile>) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             runCatching {
-                filesCache.writeText(files.joinToString("\n") { f ->
-                    "${f.kind}|${f.id}|${f.timestamp ?: ""}|${f.size}"
-                })
+                filesCache.writeText(
+                    files.joinToString("\n") { f ->
+                        "${f.kind}|${f.id}|${f.timestamp ?: ""}|${f.size}"
+                    }
+                )
             }
         }
     }
@@ -366,22 +388,34 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         val local = _localFiles.value
         val dl = session.downloads.value
         val fresh = files.filter {
-            it.kindChar != 'L' && it.timestamp != null && it.timestamp.isAfter(wm) &&
-                local[it.uniqueId] == null && dl[it.uniqueId] == null
+            it.kindChar != 'L' &&
+                it.timestamp != null &&
+                it.timestamp.isAfter(wm) &&
+                local[it.uniqueId] == null &&
+                dl[it.uniqueId] == null
         }.sortedBy { it.timestamp }.take(10)
         if (fresh.isEmpty()) return
         fresh.forEach(::download)
         session.autoSyncWatermark = fresh.last().timestamp
-        notice(getApplication<Application>().resources.getQuantityString(
-            R.plurals.notice_auto_download, fresh.size, fresh.size))
+        notice(
+            getApplication<Application>().resources.getQuantityString(
+                R.plurals.notice_auto_download,
+                fresh.size,
+                fresh.size
+            )
+        )
     }
 
     // ---- Settings -----------------------------------------------------------
 
     fun loadSettings(force: Boolean = false) {
         if (_settingsLoading.value) return
-        if (!force && _settings.value != null &&
-            System.currentTimeMillis() - settingsLoadedAt < 30_000) return
+        if (!force &&
+            _settings.value != null &&
+            System.currentTimeMillis() - settingsLoadedAt < 30_000
+        ) {
+            return
+        }
         viewModelScope.launch {
             _settingsLoading.value = true
             runCatching {
@@ -396,8 +430,10 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 _settingValues.value = values
                 settingsLoadedAt = System.currentTimeMillis()
             }.onFailure {
-                notice(getApplication<Application>()
-                    .getString(R.string.notice_settings_failed, it.message))
+                notice(
+                    getApplication<Application>()
+                        .getString(R.string.notice_settings_failed, it.message)
+                )
             }
             _settingsLoading.value = false
         }
@@ -408,8 +444,10 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         _settingValues.update { it + (id to byteArrayOf(value.toByte())) }
         viewModelScope.launch {
             if (!client.setParam(id, value)) {
-                notice(getApplication<Application>()
-                    .getString(R.string.notice_setting_rejected, id))
+                notice(
+                    getApplication<Application>()
+                        .getString(R.string.notice_setting_rejected, id)
+                )
                 if (prev != null) _settingValues.update { it + (id to prev) }
             }
         }
@@ -430,8 +468,10 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 .onSuccess { log("menu XML: ${it.length} chars") }
                 .onFailure {
                     val cached = client.lastMenuXml
-                    log("menu re-request failed: ${it.message}" +
-                        (cached?.let { c -> " (init cache: ${c.length} chars)" } ?: ""))
+                    log(
+                        "menu re-request failed: ${it.message}" +
+                            (cached?.let { c -> " (init cache: ${c.length} chars)" } ?: "")
+                    )
                 }
         }
     }
@@ -484,7 +524,10 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 val result = dest.outputStream().use { out ->
                     client.downloadFile(target, out) { got, total ->
                         val mb = got / (1024 * 1024)
-                        if (mb != lastLogged) { lastLogged = mb; log("  ${got / 1024}/${total / 1024} KiB") }
+                        if (mb != lastLogged) {
+                            lastLogged = mb
+                            log("  ${got / 1024}/${total / 1024} KiB")
+                        }
                     }
                 }
                 when (result) {

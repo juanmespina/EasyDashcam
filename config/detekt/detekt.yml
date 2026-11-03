@@ -1,0 +1,11 @@
+# Overrides on top of detekt's default config (buildUponDefaultConfig).
+naming:
+  FunctionNaming:
+    # Compose UI functions are PascalCase by convention.
+    ignoreAnnotated: ['Composable']
+
+style:
+  MagicNumber:
+    # GPSOCKET/AVI parsing is byte offsets and pacing delays that are
+    # documented where they are used; naming each one adds noise, not meaning.
+    active: false

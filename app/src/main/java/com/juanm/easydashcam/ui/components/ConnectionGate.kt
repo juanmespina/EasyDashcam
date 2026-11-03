@@ -29,11 +29,7 @@ import com.juanm.easydashcam.core.net.GpsocketClient
  * so connection handling lives in exactly one place.
  */
 @Composable
-fun ConnectionGate(
-    state: GpsocketClient.State,
-    onConnect: () -> Unit,
-    content: @Composable () -> Unit
-) {
+fun ConnectionGate(state: GpsocketClient.State, onConnect: () -> Unit, content: @Composable () -> Unit) {
     if (state is GpsocketClient.State.Connected) {
         content()
         return
@@ -55,7 +51,8 @@ fun ConnectionGate(
                             stringResource(R.string.connecting)
                         is GpsocketClient.State.Error -> stringResource(
                             R.string.connection_error,
-                            state.cause.message ?: state.cause.javaClass.simpleName)
+                            state.cause.message ?: state.cause.javaClass.simpleName
+                        )
                         else -> stringResource(R.string.join_hotspot)
                     },
                     style = MaterialTheme.typography.bodyLarge,
@@ -70,8 +67,11 @@ fun ConnectionGate(
                         }
                         OutlinedButton(onClick = {
                             // The system Wi-Fi panel (29+) doesn't leave the app.
-                            val action = if (Build.VERSION.SDK_INT >= 29)
-                                Settings.Panel.ACTION_WIFI else Settings.ACTION_WIFI_SETTINGS
+                            val action = if (Build.VERSION.SDK_INT >= 29) {
+                                Settings.Panel.ACTION_WIFI
+                            } else {
+                                Settings.ACTION_WIFI_SETTINGS
+                            }
                             context.startActivity(Intent(action))
                         }) { Text(stringResource(R.string.open_wifi_settings)) }
                     }

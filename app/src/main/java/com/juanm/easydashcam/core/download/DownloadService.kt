@@ -9,12 +9,13 @@ import android.content.Context
 import android.content.Intent
 import android.os.IBinder
 import android.os.PowerManager
-import com.juanm.easydashcam.core.DebugLogger
 import androidx.core.app.NotificationCompat
 import com.juanm.easydashcam.EasyDashcamApp
 import com.juanm.easydashcam.R
+import com.juanm.easydashcam.core.DebugLogger
 import com.juanm.easydashcam.core.net.GpsocketClient
 import com.juanm.easydashcam.core.session.CameraSession
+import java.io.OutputStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,7 +23,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
-import java.io.OutputStream
 
 /**
  * Foreground service that downloads recordings in the background.
@@ -55,29 +55,34 @@ class DownloadService : Service() {
                 f.timestamp?.let { putExtra(EXTRA_TS, it.toString()) }
             }
 
-        fun cancelIntent(context: Context, uniqueId: Int) =
-            Intent(context, DownloadService::class.java).apply {
-                action = ACTION_CANCEL
-                putExtra(EXTRA_ID, uniqueId)
-            }
+        fun cancelIntent(context: Context, uniqueId: Int) = Intent(context, DownloadService::class.java).apply {
+            action = ACTION_CANCEL
+            putExtra(EXTRA_ID, uniqueId)
+        }
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val queue = Channel<GpsocketClient.CameraFile>(Channel.UNLIMITED)
+
     /** Items sent to [queue] and not yet received — Channel.isEmpty is experimental. */
     private val pending = java.util.concurrent.atomic.AtomicInteger(0)
     private val cancelled = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
+
     /** uniqueIds from enqueue until finishFile — rejects duplicate downloads. */
     private val queuedIds = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
     private lateinit var session: CameraSession
     private lateinit var nm: NotificationManager
+
     // Written on main (onStartCommand) and reset by the IO worker.
     @Volatile private var worker = false
+
     /** Latest delivered startId — stopSelfResult uses it so an intent
      *  queued mid-shutdown keeps the service alive. */
     private var lastStartId = 0
+
     // Queue counters for "file N of M" in the notification.
     @Volatile private var enqueued = 0
+
     @Volatile private var finished = 0
 
     override fun onCreate() {
@@ -85,13 +90,18 @@ class DownloadService : Service() {
         session = (application as EasyDashcamApp).session
         nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, getString(R.string.channel_downloads),
-                NotificationManager.IMPORTANCE_LOW)
+            NotificationChannel(
+                CHANNEL_ID,
+                getString(R.string.channel_downloads),
+                NotificationManager.IMPORTANCE_LOW
+            )
         )
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_RESULT_ID,
+            NotificationChannel(
+                CHANNEL_RESULT_ID,
                 getString(R.string.channel_download_results),
-                NotificationManager.IMPORTANCE_DEFAULT)
+                NotificationManager.IMPORTANCE_DEFAULT
+            )
         )
     }
 
@@ -130,6 +140,7 @@ class DownloadService : Service() {
         worker = true
         startForeground(NOTIF_ID, notification(getString(R.string.notif_preparing)))
         val pm = getSystemService(PowerManager::class.java)
+
         @Suppress("DEPRECATION") // partial wake lock is still the right tool for a socket transfer
         val wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "easydashcam:download")
         wakeLock.acquire(60 * 60 * 1000L)
@@ -187,8 +198,7 @@ class DownloadService : Service() {
     }
 
     /** One transfer attempt; true = terminal state reached. */
-    private suspend fun downloadAttempt(
-        f: GpsocketClient.CameraFile, lastAttempt: Boolean): Boolean {
+    private suspend fun downloadAttempt(f: GpsocketClient.CameraFile, lastAttempt: Boolean): Boolean {
         // open() does a MediaStore insert — it can throw (full storage,
         // revoked volume), and on this supervisor scope an uncaught
         // exception crashes the app.
@@ -229,15 +239,24 @@ class DownloadService : Service() {
                     if (now - lastNotifMs >= 500 || got >= total) {
                         lastNotifMs = now
                         val elapsed = now - startMs
-                        val eta = if (elapsed > 1500 && got in 1 until total)
-                            (total - got) * elapsed / got / 1000 else null
-                        session.updateDownload(f.uniqueId,
-                            CameraSession.DownloadState(got, total, etaSec = eta))
-                        nm.notify(NOTIF_ID, notification(
-                            getString(R.string.notif_progress, label, got / 1024, total / 1024) +
-                                (eta?.let { e -> getString(R.string.notif_eta, e) } ?: "") +
-                                getString(R.string.notif_file_n, finished + 1, enqueued),
-                            f.uniqueId))
+                        val eta = if (elapsed > 1500 && got in 1 until total) {
+                            (total - got) * elapsed / got / 1000
+                        } else {
+                            null
+                        }
+                        session.updateDownload(
+                            f.uniqueId,
+                            CameraSession.DownloadState(got, total, etaSec = eta)
+                        )
+                        nm.notify(
+                            NOTIF_ID,
+                            notification(
+                                getString(R.string.notif_progress, label, got / 1024, total / 1024) +
+                                    (eta?.let { e -> getString(R.string.notif_eta, e) } ?: "") +
+                                    getString(R.string.notif_file_n, finished + 1, enqueued),
+                                f.uniqueId
+                            )
+                        )
                     }
                 }
             }
@@ -254,11 +273,15 @@ class DownloadService : Service() {
             is GpsocketClient.DownloadResult.Success -> {
                 val magic = head.toByteArray()
                 val isJpeg = magic.size >= 2 &&
-                    magic[0] == 0xFF.toByte() && magic[1] == 0xD8.toByte()
+                    magic[0] == 0xFF.toByte() &&
+                    magic[1] == 0xD8.toByte()
                 runCatching { ClipStore.commit(this, dest, isJpeg) }
                     .onFailure {
-                        failFile(dest, f.uniqueId,
-                            it.message ?: it.javaClass.simpleName)
+                        failFile(
+                            dest,
+                            f.uniqueId,
+                            it.message ?: it.javaClass.simpleName
+                        )
                         return true
                     }
                 finishFile(f.uniqueId)
@@ -271,8 +294,10 @@ class DownloadService : Service() {
                 // dropped before the next attempt re-opens it.
                 ClipStore.fail(this, dest)
                 if (!lastAttempt && f.uniqueId !in cancelled) return false
-                finishFile(f.uniqueId,
-                    error = getString(R.string.dl_err_stalled, result.bytes, result.expected))
+                finishFile(
+                    f.uniqueId,
+                    error = getString(R.string.dl_err_stalled, result.bytes, result.expected)
+                )
             }
             is GpsocketClient.DownloadResult.Failed ->
                 failFile(dest, f.uniqueId, result.reason)
@@ -285,18 +310,27 @@ class DownloadService : Service() {
         queuedIds -= id
         val prev = session.downloads.value[id]
         session.updateDownload(
-            id, CameraSession.DownloadState(prev?.received ?: 0, prev?.total ?: 0, done = true, error = error)
+            id,
+            CameraSession.DownloadState(prev?.received ?: 0, prev?.total ?: 0, done = true, error = error)
         )
         // Result goes on a separate id + channel — the foreground notification
         // is removed with the service and would take the result with it.
-        nm.notify(NOTIF_RESULT_ID, NotificationCompat.Builder(this, CHANNEL_RESULT_ID)
-            .setContentTitle(getString(R.string.app_name))
-            .setContentText(if (error == null) getString(R.string.notif_download_complete)
-                else getString(R.string.notif_download_failed, error))
-            .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setContentIntent(openAppIntent())
-            .setAutoCancel(true)
-            .build())
+        nm.notify(
+            NOTIF_RESULT_ID,
+            NotificationCompat.Builder(this, CHANNEL_RESULT_ID)
+                .setContentTitle(getString(R.string.app_name))
+                .setContentText(
+                    if (error == null) {
+                        getString(R.string.notif_download_complete)
+                    } else {
+                        getString(R.string.notif_download_failed, error)
+                    }
+                )
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentIntent(openAppIntent())
+                .setAutoCancel(true)
+                .build()
+        )
         DebugLogger.log("GPSOCKET", "download %04x -> %s".format(id ushr 8, error ?: "done"))
     }
 
@@ -306,9 +340,12 @@ class DownloadService : Service() {
     }
 
     private fun openAppIntent(): PendingIntent = PendingIntent.getActivity(
-        this, 0, packageManager.getLaunchIntentForPackage(packageName)!!
+        this,
+        0,
+        packageManager.getLaunchIntentForPackage(packageName)!!
             .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
-        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+    )
 
     private fun notification(text: String, fileId: Int? = null): Notification {
         val b = NotificationCompat.Builder(this, CHANNEL_ID)
@@ -318,8 +355,16 @@ class DownloadService : Service() {
             .setContentIntent(openAppIntent())
             .setOngoing(true)
         if (fileId != null) {
-            b.addAction(0, getString(R.string.cancel), PendingIntent.getService(
-                this, fileId, cancelIntent(this, fileId), PendingIntent.FLAG_IMMUTABLE))
+            b.addAction(
+                0,
+                getString(R.string.cancel),
+                PendingIntent.getService(
+                    this,
+                    fileId,
+                    cancelIntent(this, fileId),
+                    PendingIntent.FLAG_IMMUTABLE
+                )
+            )
         }
         return b.build()
     }

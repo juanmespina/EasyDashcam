@@ -24,7 +24,9 @@ CLIPS = "/sdcard/Movies/EasyDashcam"
 
 
 def adb(*args: str) -> str:
-    return subprocess.run(["adb", *args], capture_output=True, text=True, check=False).stdout
+    return subprocess.run(
+        ["adb", *args], capture_output=True, text=True, check=False
+    ).stdout
 
 
 def shell(*args: str) -> str:
@@ -81,12 +83,40 @@ def main() -> None:
         sys.exit(0 if wait_for(r"TX cmd=0x0800", 20) else "handshake not seen in 20 s")
     elif cmd == "download":
         rid, kind, kib = num(args[0]), num(args[1]), num(args[2])
-        print(shell("am", "start-foreground-service", "-n", SVC, "-a", f"{ACTION}.DOWNLOAD",
-                    "--ei", "id", str(rid), "--ei", "kind", str(kind), "--el", "size", str(kib)))
+        print(
+            shell(
+                "am",
+                "start-foreground-service",
+                "-n",
+                SVC,
+                "-a",
+                f"{ACTION}.DOWNLOAD",
+                "--ei",
+                "id",
+                str(rid),
+                "--ei",
+                "kind",
+                str(kind),
+                "--el",
+                "size",
+                str(kib),
+            )
+        )
     elif cmd == "cancel":
         uid = (num(args[0]) << 8) | num(args[1])
-        print(shell("am", "start-service", "-n", SVC, "-a", f"{ACTION}.CANCEL",
-                    "--ei", "id", str(uid)))
+        print(
+            shell(
+                "am",
+                "start-service",
+                "-n",
+                SVC,
+                "-a",
+                f"{ACTION}.CANCEL",
+                "--ei",
+                "id",
+                str(uid),
+            )
+        )
     elif cmd == "log":
         print(log(int(args[0]) if args else 40))
     elif cmd == "grep":
@@ -97,12 +127,21 @@ def main() -> None:
             sys.exit(f"no saved clip matches {args[0]}")
         raw = shell("xxd", "-p", "-l", "8", f"{CLIPS}/{name}").strip()
         size = shell("stat", "-c", "%s", f"{CLIPS}/{name}").strip()
-        riff = int.from_bytes(bytes.fromhex(raw)[4:8], "little") + 8 if raw.startswith("52494646") else None
+        riff = (
+            int.from_bytes(bytes.fromhex(raw)[4:8], "little") + 8
+            if raw.startswith("52494646")
+            else None
+        )
         print(f"{name} riff_size={riff} file_size={size}")
     elif cmd == "screenshot":
         with open(args[0], "wb") as f:
-            f.write(subprocess.run(["adb", "exec-out", "screencap", "-p"],
-                                   capture_output=True, check=True).stdout)
+            f.write(
+                subprocess.run(
+                    ["adb", "exec-out", "screencap", "-p"],
+                    capture_output=True,
+                    check=True,
+                ).stdout
+            )
     else:
         sys.exit(__doc__)
 

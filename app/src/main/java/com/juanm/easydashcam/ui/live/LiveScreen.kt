@@ -48,15 +48,15 @@ import com.juanm.easydashcam.R
 import com.juanm.easydashcam.core.net.RtspMjpegClient
 import com.juanm.easydashcam.ui.camera.CameraViewModel
 import com.juanm.easydashcam.ui.components.ConnectionGate
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /** Live tab — RTSP MJPEG stream from the camera. */
 @Composable
@@ -66,8 +66,13 @@ fun LiveScreen(vm: CameraViewModel) {
     // Modes are global on the camera: a download steals the preview channel.
     val transferActive by vm.transferActive.collectAsStateWithLifecycle()
     ConnectionGate(state = state, onConnect = vm::connect) {
-        LivePlayer(cameraHost, transferActive,
-            vm::enterPreviewMode, vm::exitPreviewMode, vm::postNotice)
+        LivePlayer(
+            cameraHost,
+            transferActive,
+            vm::enterPreviewMode,
+            vm::exitPreviewMode,
+            vm::postNotice
+        )
     }
 }
 
@@ -102,8 +107,8 @@ private fun LivePlayer(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, e ->
             if (e == Lifecycle.Event.ON_STOP) {
-                client.stop()       // UDP only — lets run() send TEARDOWN
-                onDisarmed()        // drop GPSOCKET preview mode too
+                client.stop() // UDP only — lets run() send TEARDOWN
+                onDisarmed() // drop GPSOCKET preview mode too
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -117,7 +122,7 @@ private fun LivePlayer(
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             status = Status.Buffering
             try {
-                runCatching { onArmed() }   // GPSOCKET preview mode (0x01)
+                runCatching { onArmed() } // GPSOCKET preview mode (0x01)
                 client.run { bmp ->
                     frame = bmp
                     if (status != Status.Playing) status = Status.Playing
@@ -173,10 +178,14 @@ private fun LivePlayer(
                     client.setAudioMuted(muted)
                 }) {
                     Icon(
-                        if (muted) Icons.AutoMirrored.Filled.VolumeOff
-                        else Icons.AutoMirrored.Filled.VolumeUp,
+                        if (muted) {
+                            Icons.AutoMirrored.Filled.VolumeOff
+                        } else {
+                            Icons.AutoMirrored.Filled.VolumeUp
+                        },
                         contentDescription = stringResource(
-                            if (muted) R.string.unmute else R.string.mute),
+                            if (muted) R.string.unmute else R.string.mute
+                        ),
                         tint = Color.White
                     )
                 }
@@ -226,7 +235,9 @@ private fun saveSnapshot(context: Context, bmp: Bitmap): Boolean {
         put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/EasyDashcam")
     }
     val uri = context.contentResolver.insert(
-        MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values)
+        MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+        values
+    )
         ?: return false
     return context.contentResolver.openOutputStream(uri)?.use {
         bmp.compress(Bitmap.CompressFormat.JPEG, 95, it)
