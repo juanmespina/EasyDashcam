@@ -28,7 +28,7 @@ The external-server activity is a concern about unnecessary network communicatio
 - **Its location permission** goes beyond what Android requires: any app joining a device Wi-Fi network needs location access, but Viidure also queries `loc.map.baidu.com` — Baidu's geolocation service — so the granted permission feeds a third-party location SDK, not just the Wi-Fi connection.
 - **Independent research** ([Brown Fine Security](https://brownfinesecurity.com/blog/police-bodycam-data-to-china), covered by [GBHackers](https://gbhackers.com/police-body-camera-apps/)) decrypted Viidure's traffic and found it posts device identifiers (IMEI, model, app version) to `app-api.lufengzhe.com` on a Huawei-hosted IP block, and that the app accepts forged TLS certificates.
 
-Easy Dashcam declares no location permission — its Wi-Fi access uses `NEARBY_WIFI_DEVICES` flagged `neverForLocation`, so it can never read your GPS.
+Easy Dashcam declares no location permission and no Wi-Fi scanning permission. It finds the camera through the joined network's gateway address, so it can never read your GPS.
 
 The packet-capture analysis used during development lives at `../docs/recon/` in the developer's workspace, outside this repository, and is not shipped here. Those notes describe camera communication, not a detailed audit of Viidure's external traffic.
 
@@ -127,9 +127,9 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ## Stack
 
-Kotlin 2.0.21, Android Gradle Plugin 8.7.3, Gradle 8.9, compile/target SDK 35, minimum SDK 26, Jetpack Compose (BOM 2024.12.01, Material 3), MVVM, OkHttp 4.12.0, and coroutines 1.9.0. Java/Kotlin bytecode targets Java 17; the build uses JDK 21.
+Kotlin 2.0.21, Android Gradle Plugin 8.7.3, Gradle 8.9, compile/target SDK 35, minimum SDK 26, Jetpack Compose (BOM 2024.12.01, Material 3), MVVM, and coroutines 1.9.0. Java/Kotlin bytecode targets Java 17; the build uses JDK 21.
 
-RTSP/MJPEG live viewing (`RtspMjpegClient`) and AVI/MJPEG playback (`AviMjpegPlayer`) use custom implementations. Media3 ExoPlayer and UI 1.5.1 are dependencies, but do not power those playback paths. See [docs/crash-course.md](docs/crash-course.md) for the implementation tour.
+RTSP/MJPEG live viewing (`RtspMjpegClient`) and AVI/MJPEG playback (`AviMjpegPlayer`) use custom implementations, with no media library. See [docs/crash-course.md](docs/crash-course.md) for the implementation tour.
 
 ## License
 

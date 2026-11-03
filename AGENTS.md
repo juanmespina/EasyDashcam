@@ -24,8 +24,8 @@ Android app (Kotlin + Jetpack Compose, MVVM) replacing the ad-heavy Viidure app 
 
 - Kotlin 2.0.21, AGP 8.7.3, Gradle 8.9, compileSdk 35, minSdk 26
 - Compose BOM 2024.12.01, Material 3
-- Media3 ExoPlayer (+ui) 1.5.1 — kept for future playback; RTSP is custom (`RtspMjpegClient`), AVI/MJPEG playback is custom (`AviMjpegPlayer`)
-- OkHttp 4.12.0 (fallback/HTTP), coroutines 1.9.0
+- No media library: RTSP is custom (`RtspMjpegClient`), AVI/MJPEG playback is custom (`AviMjpegPlayer`)
+- Coroutines 1.9.0
 - Package: `com.juanm.easydashcam`
 
 ## Conventions

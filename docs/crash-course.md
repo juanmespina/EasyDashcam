@@ -213,7 +213,7 @@ Java for the build comes from Android Studio's bundled **JBR 21** (`JAVA_HOME`),
 - `.../core/net/GpsocketClient.kt` — the protocol engine (§3, §2's fix lives here)
 - `.../core/net/CameraNetworkBinder.kt` — Wi-Fi binding (§5)
 - `app/src/main/AndroidManifest.xml` — declared permissions (internet, network state, foreground download service prep)
-- `build.gradle.kts` (*app*) — dependencies: Compose, Material 3, Media3 ExoPlayer, OkHttp, coroutines (RTSP/AVI playback are hand-rolled — see §3.7)
+- `build.gradle.kts` (*app*) — dependencies: Compose, Material 3, coroutines (RTSP/AVI playback are hand-rolled — see §3.7)
 - `app/src/test/.../AviMjpegPlayerTest.kt` — JVM unit tests for the AVI indexer
 - `tools/` — deploy/diagnostic scripts used by the dev loop (§6)
 
