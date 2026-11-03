@@ -438,24 +438,24 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         val prev = _settingValues.value[id]
         _settingValues.update { it + (id to byteArrayOf(value.toByte())) }
         viewModelScope.launch {
-            if (!client.setParam(id, value)) {
+            // A dead link throws from the socket write before the read loop
+            // notices (up to its 15 s timeout); treat it as a refusal.
+            val applied = try {
+                client.setParam(id, value)
+            } catch (_: java.io.IOException) {
+                false
+            }
+            if (!applied) {
                 notice(
                     getApplication<Application>()
                         .getString(R.string.notice_setting_rejected, id)
                 )
-                if (prev != null) _settingValues.update { it + (id to prev) }
+                _settingValues.update { if (prev != null) it + (id to prev) else it - id }
             }
         }
     }
 
     // ---- Debug actions -------------------------------------------------------
-
-    /** Live-probing API: send a raw GPSOCKET command live. */
-    fun probe(cmd: Int, args: ByteArray = byteArrayOf()) {
-        val argHex = args.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
-        _frameLog.update { (it + "→ TX cmd=0x%04x $argHex".format(cmd)).takeLast(60) }
-        viewModelScope.launch { client.sendRaw(cmd, args) }
-    }
 
     fun fetchMenu() {
         viewModelScope.launch {

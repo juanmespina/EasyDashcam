@@ -326,22 +326,6 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
         writeArgs(CMD_AUTH_ROUND, token)
     }
 
-    /** Live-probing API: send a bare command or command+inline-args. */
-    suspend fun sendRaw(cmd: Int, args: ByteArray = byteArrayOf()) {
-        DebugLogger.log(
-            "GPSOCKET",
-            "TX probe cmd=0x%04x args=%s".format(
-                cmd,
-                args.joinToString("") {
-                    "%02x".format(
-                        it.toInt() and 0xFF
-                    )
-                }
-            )
-        )
-        if (args.isEmpty()) writeBare(cmd) else writeArgs(cmd, args)
-    }
-
     // ---- Request/response exchanges -----------------------------------------
     // The reply collector is subscribed BEFORE the request is sent, so no reply
     // can be missed. requestLock serializes exchanges: get-param replies carry

@@ -1,5 +1,6 @@
 package com.juanm.easydashcam.ui.components
 
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.os.Build
 import android.provider.Settings
@@ -72,7 +73,12 @@ fun ConnectionGate(state: GpsocketClient.State, onConnect: () -> Unit, content: 
                             } else {
                                 Settings.ACTION_WIFI_SETTINGS
                             }
-                            context.startActivity(Intent(action))
+                            try {
+                                context.startActivity(Intent(action))
+                            } catch (_: ActivityNotFoundException) {
+                                // Some tablets and custom ROMs ship no Wi-Fi panel.
+                                context.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
+                            }
                         }) { Text(stringResource(R.string.open_wifi_settings)) }
                     }
                 }
