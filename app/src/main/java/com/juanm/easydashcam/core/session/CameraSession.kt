@@ -49,11 +49,6 @@ class CameraSession(context: Context) {
         _downloads.update { it - id }
     }
 
-    /** Drop all transfer state — a reconnect may be looking at a new card. */
-    fun clearDownloads() {
-        _downloads.value = emptyMap()
-    }
-
     // ---- Auto-download -----------------------------------------------------
     // When enabled, refreshFiles() enqueues only records newer than the
     // watermark — clips that existed before enabling are left alone.

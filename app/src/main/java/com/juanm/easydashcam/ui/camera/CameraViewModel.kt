@@ -99,11 +99,14 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 val wasConnected = _state.value is GpsocketClient.State.Connected
                 _state.value = s
                 // A fresh session may see a different card — drop caches.
+                // Download state stays: it lives in the process-wide session,
+                // this ViewModel is new on every app reopen, and queued or
+                // failed rows must survive both. refreshLocalFiles drops
+                // finished entries whose file is gone.
                 if (s is GpsocketClient.State.Connected && !wasConnected) {
                     filesFetchedAt = 0
                     settingsLoadedAt = 0
                     _settings.value = null
-                    session.clearDownloads()
                     restorePersistedFiles() // show last-known list while refetching
                 }
             }
