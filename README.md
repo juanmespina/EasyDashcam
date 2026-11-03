@@ -10,6 +10,12 @@ Make everyday dashcam tasks accessible without an account, advertising, subscrip
 
 Easy Dashcam is an alternative to the Viidure workflow, focused on local access to your own hardware and media rather than online services.
 
+## Screenshots
+
+| Live view | Files | Settings |
+|-----------|-------|----------|
+| ![Live view](docs/screenshots/live.png) | ![Files](docs/screenshots/files.png) | ![Settings](docs/screenshots/settings.png) |
+
 ## Why replace Viidure?
 
 The original motivation for Easy Dashcam was Viidure's ad-heavy experience, paid membership restrictions on basic features, and observed connections to external, third-party servers while browsing the camera. Accessing recordings on your own camera should not require those extras.
