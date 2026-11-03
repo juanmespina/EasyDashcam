@@ -56,8 +56,12 @@ object ClipStore {
             val uri = context.contentResolver.insert(
                 MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
                 values
-            )
-            val out = uri?.let { context.contentResolver.openOutputStream(it) } ?: return null
+            ) ?: return null
+            val out = context.contentResolver.openOutputStream(uri)
+            if (out == null) {
+                runCatching { context.contentResolver.delete(uri, null, null) }
+                return null
+            }
             return Dest(label, uri, null, out)
         }
         val fallback = File(context.getExternalFilesDir(Environment.DIRECTORY_MOVIES), label)
@@ -113,11 +117,13 @@ object ClipStore {
                     null,
                     null
                 )
-                context.contentResolver.delete(dest.uri, null, null)
             } catch (e: Exception) {
                 runCatching { context.contentResolver.delete(imgUri, null, null) }
                 throw e
             }
+            // The photo is published; failing to drop the pending video row
+            // must not delete it. MediaStore expires stale pending rows.
+            runCatching { context.contentResolver.delete(dest.uri, null, null) }
         } else if (isJpeg && dest.fallback != null) {
             dest.fallback.renameTo(
                 File(dest.fallback.parentFile, dest.label.removeSuffix(".avi") + ".jpg")

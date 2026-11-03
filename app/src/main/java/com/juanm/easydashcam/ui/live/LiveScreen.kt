@@ -239,10 +239,11 @@ private fun saveSnapshot(context: Context, bmp: Bitmap): Boolean {
         values
     )
         ?: return false
-    return context.contentResolver.openOutputStream(uri)?.use {
-        bmp.compress(Bitmap.CompressFormat.JPEG, 95, it)
-        true
-    } == true
+    val ok = runCatching {
+        context.contentResolver.openOutputStream(uri)?.use { bmp.compress(Bitmap.CompressFormat.JPEG, 95, it) } == true
+    }.getOrDefault(false)
+    if (!ok) runCatching { context.contentResolver.delete(uri, null, null) }
+    return ok
 }
 
 private sealed interface Status {

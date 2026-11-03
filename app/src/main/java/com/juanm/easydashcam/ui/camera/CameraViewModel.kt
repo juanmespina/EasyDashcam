@@ -286,8 +286,14 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     /** Remove a downloaded clip/photo from MediaStore and refresh the marks. */
     fun deleteLocal(uri: Uri) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            // Pre-29 copies are file:// URIs, which ContentResolver.delete
+            // rejects ("Unknown URL") — delete the file itself.
             val rows = runCatching {
-                getApplication<Application>().contentResolver.delete(uri, null, null)
+                if (uri.scheme == "file") {
+                    if (java.io.File(requireNotNull(uri.path)).delete()) 1 else 0
+                } else {
+                    getApplication<Application>().contentResolver.delete(uri, null, null)
+                }
             }.getOrDefault(0)
             notice(
                 getApplication<Application>().getString(
