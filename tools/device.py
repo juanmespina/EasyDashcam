@@ -125,8 +125,9 @@ def main() -> None:
         name = shell(f"ls -t {CLIPS} | grep -m1 '{args[0]}'").strip()
         if not name:
             sys.exit(f"no saved clip matches {args[0]}")
-        raw = shell("xxd", "-p", "-l", "8", f"{CLIPS}/{name}").strip()
-        size = shell("stat", "-c", "%s", f"{CLIPS}/{name}").strip()
+        path = f"'{CLIPS}/{name}'"
+        raw = shell(f"xxd -p -l 8 {path}").strip()
+        size = shell(f"stat -c %s {path}").strip()
         riff = (
             int.from_bytes(bytes.fromhex(raw)[4:8], "little") + 8
             if raw.startswith("52494646")

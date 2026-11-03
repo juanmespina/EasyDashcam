@@ -231,7 +231,21 @@ class DownloadService : Service() {
         val result = try {
             sniffed.use {
                 session.client.downloadFile(f, it) { got, total ->
-                    if (f.uniqueId in cancelled) throw CancellationException("user cancelled")
+                    if (f.uniqueId in cancelled) {
+                        // The client drains the rest of the camera's stream
+                        // before it returns (seconds for a large clip); show
+                        // the cancel now rather than after the drain.
+                        session.updateDownload(
+                            f.uniqueId,
+                            CameraSession.DownloadState(
+                                got,
+                                total,
+                                done = true,
+                                error = getString(R.string.dl_err_cancelled)
+                            )
+                        )
+                        throw CancellationException("user cancelled")
+                    }
                     // The callback fires per 32 KiB chunk — every emission
                     // recomposes the whole Files screen, so cap UI progress
                     // at ~2/s (completion always posts).

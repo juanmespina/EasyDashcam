@@ -78,6 +78,12 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
 
         private val INIT_PARAM_IDS = intArrayOf(0x9002, 0x9003, 0x9004, 0x9009, 0x0300)
 
+        /** No 0x0503 frame for this long ends an aborted stream's drain. */
+        private const val DRAIN_QUIET_MS = 1_500L
+
+        /** Upper bound on one drain — a 12 MB clip streams in a few seconds. */
+        private const val DRAIN_CAP_MS = 30_000L
+
         /**
          * Split a camera byte stream into complete frames. Returns the frames
          * and the bytes to keep for the next read: an incomplete frame, or,
@@ -572,6 +578,10 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
                 }
             }
         }
+        // Set once 0x0503 is sent and cleared when the camera's terminator
+        // arrives: an aborted stream must be drained before the lock is
+        // released, or its chunks land in the next download.
+        var streamOpen = false
         try {
             val idArgs = byteArrayOf(
                 (file.id and 0xFF).toByte(),
@@ -599,7 +609,11 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
                 cls.type == 3 -> return@withLock DownloadResult.Refused
             }
             delay(800)
+            while (ch.tryReceive().isSuccess) {
+                // Stragglers from an earlier stream must not count as this file's bytes.
+            }
             writeArgs(CMD_DOWNLOAD, idArgs)
+            streamOpen = true
 
             val expected = file.sizeBytes
             var received = 0L
@@ -613,12 +627,17 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
                     break
                 }
                 if (f.payload.isEmpty()) { // len=0 terminator
+                    streamOpen = false
                     result = when {
                         received == 0L -> DownloadResult.Refused
                         received >= expected -> DownloadResult.Success(received)
                         // Short stream — a mid-transfer abort lands here.
                         else -> DownloadResult.Incomplete(received, expected)
                     }
+                    break
+                }
+                if (received == 0L && !startsLikeMedia(f.payload)) {
+                    result = DownloadResult.Failed("unexpected data")
                     break
                 }
                 out.write(f.payload)
@@ -632,11 +651,51 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
             }
             result
         } finally {
+            if (streamOpen) drainAbortedStream(ch)
             out.flush()
             job.cancel()
             startHeartbeat()
         }
     }
+
+    /**
+     * Discard the rest of a transfer the app stopped reading. The camera has
+     * no abort command and keeps streaming the whole file (seconds for a
+     * large clip), so wait for its empty terminator, or for a quiet gap.
+     * NonCancellable: a cancelled caller still holds the lock until the
+     * socket is clean.
+     */
+    private suspend fun drainAbortedStream(ch: kotlinx.coroutines.channels.Channel<Frame>) =
+        withContext(kotlinx.coroutines.NonCancellable) {
+            val startMs = System.currentTimeMillis()
+            var bytes = 0L
+            kotlinx.coroutines.withTimeoutOrNull(DRAIN_CAP_MS) {
+                while (true) {
+                    val f = kotlinx.coroutines.withTimeoutOrNull(DRAIN_QUIET_MS) { ch.receive() } ?: break
+                    if (f.cmd != CMD_DOWNLOAD || f.type == 3) continue
+                    if (f.payload.isEmpty()) break
+                    bytes += f.payload.size
+                }
+            }
+            if (bytes > 0) {
+                DebugLogger.log(
+                    "GPSOCKET",
+                    "drained $bytes B of an aborted transfer in ${System.currentTimeMillis() - startMs} ms"
+                )
+            }
+        }
+
+    /** A recording starts with a RIFF (AVI) header or a JPEG SOI marker. */
+    private fun startsLikeMedia(b: ByteArray): Boolean = b.size >= 4 &&
+        (
+            (
+                b[0] == 'R'.code.toByte() &&
+                    b[1] == 'I'.code.toByte() &&
+                    b[2] == 'F'.code.toByte() &&
+                    b[3] == 'F'.code.toByte()
+                ) ||
+                (b[0] == 0xFF.toByte() && b[1] == 0xD8.toByte())
+            )
 
     private suspend fun awaitCmd(ch: kotlinx.coroutines.channels.Channel<Frame>, cmd: Int, timeoutMs: Long): Frame? =
         runCatching {
