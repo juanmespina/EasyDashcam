@@ -33,6 +33,17 @@ object ClipStore {
             "%04x%c.avi".format(f.id, f.kindChar)
     }
 
+    // The suffix anchored at the end matches every name labelFor has
+    // produced, including legacy cam_<id4><kind> and photos renamed to .jpg.
+    private val clipNameRx = Regex("""([0-9a-fA-F]{4})([A-Z])\.(avi|jpg)$""")
+
+    /** The [GpsocketClient.CameraFile.uniqueId] a saved file name maps back
+     *  to, or null for a name this app did not write. */
+    fun parseClipName(name: String): Int? {
+        val m = clipNameRx.find(name) ?: return null
+        return (m.groupValues[1].toInt(16) shl 8) or m.groupValues[2][0].code
+    }
+
     fun open(context: Context, f: GpsocketClient.CameraFile, partial: Boolean = false): Dest? {
         val label = labelFor(f, partial)
         if (Build.VERSION.SDK_INT >= 29) {

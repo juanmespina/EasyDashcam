@@ -77,6 +77,60 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
         const val FILE_RECORD_SIZE = 13
 
         private val INIT_PARAM_IDS = intArrayOf(0x9002, 0x9003, 0x9004, 0x9009, 0x0300)
+
+        /**
+         * Split a camera byte stream into complete frames. Returns the frames
+         * and the bytes to keep for the next read: an incomplete frame, or,
+         * when no magic is found, the last 7 bytes in case the magic is split
+         * across two TCP reads. Type-3 frames have a fixed 2-byte arg and no
+         * length field; every other type carries a u16 length.
+         */
+        internal fun splitFrames(data: ByteArray): Pair<List<Frame>, ByteArray> {
+            val frames = ArrayList<Frame>()
+            var pos = 0
+            var keepFrom = -1
+            while (keepFrom < 0 && pos + 8 <= data.size) {
+                val idx = findMagic(data, pos)
+                val end = if (idx < 0) -1 else frameEnd(data, idx)
+                when {
+                    idx < 0 -> keepFrom = (data.size - 7).coerceAtLeast(pos)
+                    end < 0 -> keepFrom = idx
+                    else -> {
+                        val type = u16le(data, idx + 8)
+                        val payloadStart = if (type == 3) idx + 12 else idx + 14
+                        frames += Frame(type, u16le(data, idx + 10), data.copyOfRange(payloadStart, end))
+                        pos = end
+                    }
+                }
+            }
+            return frames to data.copyOfRange(if (keepFrom < 0) pos else keepFrom, data.size)
+        }
+
+        /** End offset of the frame whose magic is at [idx], or -1 while it is incomplete. */
+        private fun frameEnd(data: ByteArray, idx: Int): Int {
+            val end = when {
+                data.size - idx < 14 -> -1
+                u16le(data, idx + 8) == 3 -> idx + 14
+                else -> idx + 14 + u16le(data, idx + 12)
+            }
+            return if (end > data.size) -1 else end
+        }
+
+        private fun findMagic(data: ByteArray, from: Int): Int {
+            outer@ for (i in maxOf(from, 0)..data.size - 8) {
+                for (j in 0..7) if (data[i + j] != MAGIC[j]) continue@outer
+                return i
+            }
+            return -1
+        }
+
+        private fun u16le(data: ByteArray, off: Int): Int =
+            (data[off].toInt() and 0xFF) or ((data[off + 1].toInt() and 0xFF) shl 8)
+
+        private fun u32le(data: ByteArray, off: Int): Long = (data[off].toLong() and 0xFF) or
+            ((data[off + 1].toLong() and 0xFF) shl 8) or
+            ((data[off + 2].toLong() and 0xFF) shl 16) or
+            ((data[off + 3].toLong() and 0xFF) shl 24)
     }
 
     data class Frame(val type: Int, val cmd: Int, val payload: ByteArray) {
@@ -680,79 +734,28 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
     }
 
     private suspend fun drainFrames(buf: ByteArrayOutputStream) {
-        val data = buf.toByteArray()
-        var pos = 0
-        while (pos + 8 <= data.size) {
-            val idx = findMagic(data, pos)
-            if (idx < 0) {
-                // Drop everything except the last 7 bytes, in case the magic
-                // is split across two TCP reads.
-                val keepFrom = (data.size - 7).coerceAtLeast(0)
-                buf.reset()
-                buf.write(data, keepFrom, data.size - keepFrom)
-                return
-            }
-            if (data.size - idx < 14) {
-                buf.reset()
-                buf.write(data, idx, data.size - idx)
-                return
-            }
-            val type = u16le(data, idx + 8)
-            val cmd = u16le(data, idx + 10)
-            if (type == 3) {
-                val frame = Frame(type, cmd, data.copyOfRange(idx + 12, idx + 14))
-                _frames.emit(frame)
-                DebugLogger.log(
-                    "GPSOCKET",
-                    "RX cmd=0x%04x type=3 arg=%s".format(
-                        cmd,
-                        frame.payload.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
-                    )
-                )
-                pos = idx + 14
-                continue
-            }
-            val len = u16le(data, idx + 12)
-            if (data.size - idx < 14 + len) {
-                buf.reset()
-                buf.write(data, idx, data.size - idx)
-                return
-            }
-            val frame = Frame(type, cmd, data.copyOfRange(idx + 14, idx + 14 + len))
-            _frames.emit(frame)
-            // Bulk frames (32 KiB download chunks, ~1 Hz heartbeats) are data,
-            // not signal — logging their full payload was ~2x the transfer's
-            // cost in hex-string building alone. Cap the rest at 48 bytes.
-            if (cmd != CMD_KEEPALIVE && cmd != CMD_DOWNLOAD) {
-                DebugLogger.log(
-                    "GPSOCKET",
-                    "RX cmd=0x%04x type=%d len=%d %s".format(
-                        cmd,
-                        type,
-                        len,
-                        frame.payload.take(48).joinToString("") { "%02x".format(it.toInt() and 0xFF) }
-                    )
-                )
-            }
-            pos = idx + 14 + len
-        }
+        val (frames, rest) = splitFrames(buf.toByteArray())
         buf.reset()
-        buf.write(data, pos, data.size - pos)
-    }
-
-    private fun findMagic(data: ByteArray, from: Int): Int {
-        outer@ for (i in maxOf(from, 0)..data.size - 8) {
-            for (j in 0..7) if (data[i + j] != MAGIC[j]) continue@outer
-            return i
+        buf.write(rest)
+        for (frame in frames) {
+            _frames.emit(frame)
+            logRx(frame)
         }
-        return -1
     }
 
-    private fun u16le(data: ByteArray, off: Int): Int =
-        (data[off].toInt() and 0xFF) or ((data[off + 1].toInt() and 0xFF) shl 8)
-
-    private fun u32le(data: ByteArray, off: Int): Long = (data[off].toLong() and 0xFF) or
-        ((data[off + 1].toLong() and 0xFF) shl 8) or
-        ((data[off + 2].toLong() and 0xFF) shl 16) or
-        ((data[off + 3].toLong() and 0xFF) shl 24)
+    private fun logRx(frame: Frame) {
+        // Bulk frames (32 KiB download chunks, ~1 Hz heartbeats) are data,
+        // not signal — logging their full payload was ~2x the transfer's
+        // cost in hex-string building alone. Cap the rest at 48 bytes.
+        if (frame.type != 3 && (frame.cmd == CMD_KEEPALIVE || frame.cmd == CMD_DOWNLOAD)) return
+        val hex = frame.payload.take(48).joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+        DebugLogger.log(
+            "GPSOCKET",
+            if (frame.type == 3) {
+                "RX cmd=0x%04x type=3 arg=%s".format(frame.cmd, hex)
+            } else {
+                "RX cmd=0x%04x type=%d len=%d %s".format(frame.cmd, frame.type, frame.payload.size, hex)
+            }
+        )
+    }
 }

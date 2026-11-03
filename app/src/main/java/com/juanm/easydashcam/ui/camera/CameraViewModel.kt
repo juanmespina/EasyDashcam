@@ -167,9 +167,6 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     /** Re-scan Movies/EasyDashcam for clips we already downloaded. */
     fun refreshLocalFiles() {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            // New names are <stamp>_<id4><kind>.<ext>; legacy cam_<id4><kind>.
-            // The suffix anchored at the end matches both.
-            val nameRx = Regex("""([0-9a-fA-F]{4})([A-Z])\.(avi|jpg)$""")
             val out = mutableMapOf<Int, Uri>()
             val partials = mutableSetOf<Int>()
             if (Build.VERSION.SDK_INT < 29) {
@@ -178,8 +175,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 val dir = getApplication<Application>()
                     .getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES)
                 dir?.listFiles()?.forEach { f ->
-                    val m = nameRx.find(f.name) ?: return@forEach
-                    val uid = (m.groupValues[1].toInt(16) shl 8) or m.groupValues[2][0].code
+                    val uid = ClipStore.parseClipName(f.name) ?: return@forEach
                     out[uid] = Uri.fromFile(f)
                     if ("_partial_" in f.name) partials += uid
                 }
@@ -206,8 +202,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                         val nameCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
                         while (c.moveToNext()) {
                             val name = c.getString(nameCol)
-                            val m = nameRx.find(name) ?: continue
-                            val uid = (m.groupValues[1].toInt(16) shl 8) or m.groupValues[2][0].code
+                            val uid = ClipStore.parseClipName(name) ?: continue
                             out[uid] = ContentUris.withAppendedId(collection, c.getLong(idCol))
                             if ("_partial_" in name) partials += uid
                         }
