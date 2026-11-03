@@ -22,7 +22,12 @@ The original motivation for Easy Dashcam was Viidure's ad-heavy experience, paid
 
 Easy Dashcam talks directly to the camera on its own Wi-Fi hotspot — no account, no ads, no telemetry, and no cloud connection.
 
-The external-server activity is a concern about unnecessary network communication, not proof that recordings were uploaded. The packet-capture analysis used during development lives at `../docs/recon/` in the developer's workspace, outside this repository, and is not shipped here. Those notes describe camera communication, not a detailed audit of Viidure's external traffic or the data sent to those servers.
+The external-server activity is a concern about unnecessary network communication, not proof that recordings were uploaded. Two sources back the concern:
+
+- **Our packet captures** (taken while the phone was connected to the camera's internet-less hotspot) show DNS lookups for `app-api.lufengzhe.com` — Viidure's own cloud API — plus `mshield.baidu.com`, `loc.map.baidu.com`, and `api.map.baidu.com`, and a live TLS session to a Baidu IP. The captures are not app-attributed and the TLS payloads were not decrypted.
+- **Independent research** ([Brown Fine Security](https://brownfinesecurity.com/blog/police-bodycam-data-to-china), covered by [GBHackers](https://gbhackers.com/police-body-camera-apps/)) decrypted Viidure's traffic and found it posts device identifiers (IMEI, model, app version) to `app-api.lufengzhe.com` on a Huawei-hosted IP block, and that the app accepts forged TLS certificates.
+
+The packet-capture analysis used during development lives at `../docs/recon/` in the developer's workspace, outside this repository, and is not shipped here. Those notes describe camera communication, not a detailed audit of Viidure's external traffic.
 
 ## Features
 
