@@ -76,6 +76,7 @@ fun DebugScreen(
 
 private fun shareLog(context: android.content.Context) {
     val src = DebugLogger.logFile ?: return
+    DebugLogger.flush()
     val shareDir = java.io.File(context.cacheDir, "share").apply { mkdirs() }
     val dst = java.io.File(shareDir, "easydashcam-debug.log")
     runCatching { src.copyTo(dst, overwrite = true) }.onFailure { return }

@@ -38,6 +38,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.juanm.easydashcam.ui.camera.CameraViewModel
 import com.juanm.easydashcam.ui.debug.DebugScreen
+import com.juanm.easydashcam.ui.debug.DebugViewModel
 import com.juanm.easydashcam.ui.files.FilesScreen
 import com.juanm.easydashcam.ui.live.LiveScreen
 import com.juanm.easydashcam.ui.navigation.Destinations
@@ -61,7 +62,6 @@ class MainActivity : ComponentActivity() {
 fun AppRoot(vm: CameraViewModel = viewModel()) {
     val nav = rememberNavController()
     val state by vm.state.collectAsStateWithLifecycle()
-    val frameLog by vm.frameLog.collectAsStateWithLifecycle()
     val backStack by nav.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
     var menuOpen by remember { mutableStateOf(false) }
@@ -148,15 +148,19 @@ fun AppRoot(vm: CameraViewModel = viewModel()) {
             composable(Destinations.Settings.route) {
                 SettingsScreen(vm = vm)
             }
-            composable(Destinations.Debug.route) {
-                DebugScreen(
-                    state = state,
-                    frameLog = frameLog,
-                    onMenu = vm::fetchMenu,
-                    onFiles = vm::fetchFiles,
-                    onSettings = vm::fetchSettings,
-                    onDownload = vm::downloadFirst
-                )
+            if (BuildConfig.DEBUG) {
+                composable(Destinations.Debug.route) {
+                    val debug: DebugViewModel = viewModel()
+                    val frameLog by debug.frameLog.collectAsStateWithLifecycle()
+                    DebugScreen(
+                        state = state,
+                        frameLog = frameLog,
+                        onMenu = debug::fetchMenu,
+                        onFiles = debug::fetchFiles,
+                        onSettings = debug::fetchSettings,
+                        onDownload = debug::downloadFirst
+                    )
+                }
             }
         }
     }
