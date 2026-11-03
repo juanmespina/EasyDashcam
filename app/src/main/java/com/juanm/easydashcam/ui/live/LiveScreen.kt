@@ -118,11 +118,23 @@ private fun LivePlayer(
             onDisarmed()
         }
     }
-    LaunchedEffect(lifecycleOwner) {
+    // Camera modes are global: a download switches it to file mode and the
+    // RTP push stops. Pause instead of timing out into an error, and start
+    // over (re-arming preview mode) once the transfer ends.
+    LaunchedEffect(lifecycleOwner, transferActive) {
+        if (transferActive) {
+            client.stop()
+            status = Status.Paused
+            return@LaunchedEffect
+        }
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             status = Status.Buffering
             try {
-                runCatching { onArmed() } // GPSOCKET preview mode (0x01)
+                try {
+                    onArmed() // GPSOCKET preview mode (0x01)
+                } catch (_: java.io.IOException) {
+                    // RTSP still tries; its handshake reports a dead camera.
+                }
                 client.run { bmp ->
                     frame = bmp
                     if (status != Status.Playing) status = Status.Playing
@@ -165,6 +177,11 @@ private fun LivePlayer(
                 color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.align(Alignment.Center).padding(16.dp)
             )
+            Status.Paused -> Text(
+                stringResource(R.string.download_in_progress),
+                color = Color.White,
+                modifier = Modifier.align(Alignment.Center).padding(16.dp)
+            )
             Status.Ended -> Text(
                 stringResource(R.string.stream_ended),
                 color = Color.White,
@@ -205,18 +222,6 @@ private fun LivePlayer(
                 }
             }
         }
-        if (transferActive) {
-            Text(
-                stringResource(R.string.download_in_progress),
-                color = Color.White,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 8.dp)
-                    .background(Color.Black.copy(alpha = 0.6f))
-                    .padding(horizontal = 12.dp, vertical = 4.dp)
-            )
-        }
     }
 }
 
@@ -250,5 +255,6 @@ private sealed interface Status {
     data object Buffering : Status
     data object Playing : Status
     data object Ended : Status
+    data object Paused : Status
     data class Error(val msg: String) : Status
 }

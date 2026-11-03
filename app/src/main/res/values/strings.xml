@@ -108,7 +108,7 @@
     <string name="save_snapshot">Save snapshot</string>
     <string name="snapshot_saved">Snapshot saved to Pictures</string>
     <string name="snapshot_failed">Snapshot failed</string>
-    <string name="download_in_progress">Download in progress — preview may pause</string>
+    <string name="download_in_progress">Live view paused while a download runs. It resumes when the download ends.</string>
 
     <!-- Settings -->
     <string name="no_settings">No settings available</string>
