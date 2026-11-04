@@ -1,0 +1,64 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ComplexCondition:FilesScreen.kt$remote != null &amp;&amp; error == null &amp;&amp; (streamDone || indexed)</ID>
+    <ID>CyclomaticComplexMethod:AviMjpegPlayer.kt$AviMjpegPlayer$private suspend fun scan(stopAfterFirstFrame: Boolean): Int</ID>
+    <ID>CyclomaticComplexMethod:CameraViewModel.kt$CameraViewModel$fun refreshLocalFiles()</ID>
+    <ID>CyclomaticComplexMethod:ClipStore.kt$ClipStore$fun commit(context: Context, dest: Dest, isJpeg: Boolean)</ID>
+    <ID>CyclomaticComplexMethod:DownloadService.kt$DownloadService$private suspend fun downloadAttempt(f: GpsocketClient.CameraFile, lastAttempt: Boolean): Boolean</ID>
+    <ID>CyclomaticComplexMethod:FilesScreen.kt$@Composable private fun PlayerDialog( uri: Uri?, remote: GpsocketClient.CameraFile?, isImage: Boolean, vm: CameraViewModel, onClose: () -&gt; Unit )</ID>
+    <ID>CyclomaticComplexMethod:FilesScreen.kt$@OptIn(ExperimentalMaterial3Api::class) @Composable private fun FilesList(vm: CameraViewModel)</ID>
+    <ID>CyclomaticComplexMethod:GpsocketClient.kt$GpsocketClient$suspend fun downloadFile( file: CameraFile, out: java.io.OutputStream, timeoutMs: Long = 10_000, onProgress: (received: Long, total: Long) -&gt; Unit = { _, _ -&gt; } ): DownloadResult</ID>
+    <ID>CyclomaticComplexMethod:GpsocketClient.kt$GpsocketClient$suspend fun listFiles(maxPages: Int = 64, timeoutMs: Long = 2000): List&lt;CameraFile&gt;</ID>
+    <ID>CyclomaticComplexMethod:LiveScreen.kt$@Composable private fun LivePlayer( cameraHost: String, transferActive: Boolean, onArmed: suspend () -&gt; Unit, onDisarmed: () -&gt; Unit, onNotice: (String) -&gt; Unit )</ID>
+    <ID>CyclomaticComplexMethod:MenuParser.kt$MenuParser$fun parse(xml: String): List&lt;SettingCategory&gt;</ID>
+    <ID>CyclomaticComplexMethod:RtspMjpegClient.kt$RtspMjpegClient$private fun runAudio()</ID>
+    <ID>CyclomaticComplexMethod:RtspMjpegClient.kt$RtspMjpegClient$suspend fun run(onFrame: (Bitmap) -&gt; Unit)</ID>
+    <ID>EmptyWhileBlock:GpsocketClient.kt$GpsocketClient${}</ID>
+    <ID>LongMethod:AviMjpegPlayer.kt$AviMjpegPlayer$private suspend fun scan(stopAfterFirstFrame: Boolean): Int</ID>
+    <ID>LongMethod:DownloadService.kt$DownloadService$private suspend fun downloadAttempt(f: GpsocketClient.CameraFile, lastAttempt: Boolean): Boolean</ID>
+    <ID>LongMethod:FilesScreen.kt$@Composable private fun DownloadTrailing( download: CameraSession.DownloadState?, local: Boolean, onDownload: () -&gt; Unit, onPlay: (() -&gt; Unit)? = null, onStream: (() -&gt; Unit)? = null, onCancel: (() -&gt; Unit)? = null )</ID>
+    <ID>LongMethod:FilesScreen.kt$@Composable private fun PlayerDialog( uri: Uri?, remote: GpsocketClient.CameraFile?, isImage: Boolean, vm: CameraViewModel, onClose: () -&gt; Unit )</ID>
+    <ID>LongMethod:FilesScreen.kt$@OptIn(ExperimentalMaterial3Api::class) @Composable private fun FilesList(vm: CameraViewModel)</ID>
+    <ID>LongMethod:GpsocketClient.kt$GpsocketClient$suspend fun downloadFile( file: CameraFile, out: java.io.OutputStream, timeoutMs: Long = 10_000, onProgress: (received: Long, total: Long) -&gt; Unit = { _, _ -&gt; } ): DownloadResult</ID>
+    <ID>LongMethod:LiveScreen.kt$@Composable private fun LivePlayer( cameraHost: String, transferActive: Boolean, onArmed: suspend () -&gt; Unit, onDisarmed: () -&gt; Unit, onNotice: (String) -&gt; Unit )</ID>
+    <ID>LongMethod:MainActivity.kt$@OptIn(ExperimentalMaterial3Api::class) @Composable fun AppRoot(vm: CameraViewModel = viewModel())</ID>
+    <ID>LongMethod:RtspMjpegClient.kt$RtspMjpegClient$private fun runAudio()</ID>
+    <ID>LongMethod:RtspMjpegClient.kt$RtspMjpegClient$suspend fun run(onFrame: (Bitmap) -&gt; Unit)</ID>
+    <ID>LongMethod:SettingsScreen.kt$@Composable private fun SettingRow(setting: CameraSetting, raw: ByteArray?, onChange: (Int) -&gt; Unit)</ID>
+    <ID>LongParameterList:AviMjpegPlayerTest.kt$AviMjpegPlayerTest$( avihUsec: Int = 200_000, strhScale: Int = 0, strhRate: Int = 0, frames: List&lt;ByteArray&gt;, audioChunks: List&lt;ByteArray&gt; = emptyList(), audioRate: Int = 16000, audioStrhRate: Int = 0, totalFrames: Int = 0 )</ID>
+    <ID>LongParameterList:DebugScreen.kt$( state: GpsocketClient.State, frameLog: List&lt;String&gt;, onMenu: () -&gt; Unit, onFiles: () -&gt; Unit, onSettings: () -&gt; Unit, onDownload: () -&gt; Unit )</ID>
+    <ID>LongParameterList:FilesScreen.kt$( download: CameraSession.DownloadState?, local: Boolean, onDownload: () -&gt; Unit, onPlay: (() -&gt; Unit)? = null, onStream: (() -&gt; Unit)? = null, onCancel: (() -&gt; Unit)? = null )</ID>
+    <ID>LongParameterList:FilesScreen.kt$( file: GpsocketClient.CameraFile, download: CameraSession.DownloadState?, durationSec: Int?, localUri: Uri?, partial: Boolean = false, onDownload: () -&gt; Unit, onPlay: (() -&gt; Unit)?, onStream: (() -&gt; Unit)?, onLongPress: (() -&gt; Unit)? = null, onCancel: (() -&gt; Unit)? = null )</ID>
+    <ID>LongParameterList:FilesScreen.kt$( file: GpsocketClient.CameraFile, download: CameraSession.DownloadState?, durationSec: Int?, localUri: Uri?, partial: Boolean = false, onDownload: () -&gt; Unit, onPlay: (() -&gt; Unit)?, onStream: (() -&gt; Unit)?, onLongPress: (() -&gt; Unit)?, onCancel: (() -&gt; Unit)? = null )</ID>
+    <ID>LongParameterList:FilesScreen.kt$( file: GpsocketClient.CameraFile, first: Boolean, last: Boolean, download: CameraSession.DownloadState?, durationSec: Int?, localUri: Uri?, partial: Boolean = false, onDownload: () -&gt; Unit, onPlay: (() -&gt; Unit)?, onStream: (() -&gt; Unit)?, onLongPress: (() -&gt; Unit)?, onCancel: (() -&gt; Unit)? = null )</ID>
+    <ID>LoopWithTooManyJumpStatements:AviMjpegPlayer.kt$AviMjpegPlayer$while</ID>
+    <ID>LoopWithTooManyJumpStatements:DownloadService.kt$DownloadService$while</ID>
+    <ID>LoopWithTooManyJumpStatements:FilesScreen.kt$while</ID>
+    <ID>LoopWithTooManyJumpStatements:GpsocketClient.kt$GpsocketClient$while</ID>
+    <ID>LoopWithTooManyJumpStatements:RtspMjpegClient.kt$RtspMjpegClient$while</ID>
+    <ID>NestedBlockDepth:ClipStore.kt$ClipStore$fun commit(context: Context, dest: Dest, isJpeg: Boolean)</ID>
+    <ID>NestedBlockDepth:MenuParser.kt$MenuParser$fun parse(xml: String): List&lt;SettingCategory&gt;</ID>
+    <ID>ReturnCount:AviMjpegPlayer.kt$AviMjpegPlayer$private fun readBytesAt(offset: Long, n: Int): ByteArray?</ID>
+    <ID>ReturnCount:CameraNetworkBinder.kt$CameraNetworkBinder$@Suppress("DEPRECATION") fun bindToWifi(): String?</ID>
+    <ID>ReturnCount:CameraNetworkBinder.kt$CameraNetworkBinder$private fun gatewayOf(n: Network): String?</ID>
+    <ID>ReturnCount:ClipStore.kt$ClipStore$fun open(context: Context, f: GpsocketClient.CameraFile, partial: Boolean = false): Dest?</ID>
+    <ID>ReturnCount:DownloadService.kt$DownloadService$private suspend fun downloadAttempt(f: GpsocketClient.CameraFile, lastAttempt: Boolean): Boolean</ID>
+    <ID>ReturnCount:GpsocketClient.kt$GpsocketClient$private suspend fun drainFrames(buf: ByteArrayOutputStream)</ID>
+    <ID>ReturnCount:LiveScreen.kt$private fun saveSnapshot(context: Context, bmp: Bitmap): Boolean</ID>
+    <ID>ReturnCount:RtspMjpegClient.kt$RtspMjpegClient$private fun runAudio()</ID>
+    <ID>SwallowedException:GpsocketClient.kt$GpsocketClient$e: kotlinx.coroutines.TimeoutCancellationException</ID>
+    <ID>ThrowsCount:ClipStore.kt$ClipStore$fun commit(context: Context, dest: Dest, isJpeg: Boolean)</ID>
+    <ID>TooGenericExceptionCaught:ClipStore.kt$ClipStore$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:FilesScreen.kt$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:GpsocketClient.kt$GpsocketClient$t: Throwable</ID>
+    <ID>TooGenericExceptionCaught:LiveScreen.kt$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:RtspMjpegClient.kt$RtspMjpegClient$e: Exception</ID>
+    <ID>TooManyFunctions:AviMjpegPlayer.kt$AviMjpegPlayer : Closeable</ID>
+    <ID>TooManyFunctions:CameraViewModel.kt$CameraViewModel : AndroidViewModel</ID>
+    <ID>TooManyFunctions:DownloadService.kt$DownloadService : Service</ID>
+    <ID>TooManyFunctions:FilesScreen.kt$com.juanm.easydashcam.ui.files.FilesScreen.kt</ID>
+    <ID>TooManyFunctions:GpsocketClient.kt$GpsocketClient</ID>
+  </CurrentIssues>
+</SmellBaseline>

@@ -18,12 +18,7 @@ import java.io.OutputStream
 object ClipStore {
 
     /** An open destination for a clip's bytes. */
-    class Dest(
-        val label: String,
-        val uri: Uri?,
-        val fallback: File?,
-        val out: OutputStream
-    )
+    class Dest(val label: String, val uri: Uri?, val fallback: File?, val out: OutputStream)
 
     /** Timestamped names sort naturally and the id+kind suffix lets
      *  refreshLocalFiles map the file back to its camera record:
@@ -38,8 +33,18 @@ object ClipStore {
             "%04x%c.avi".format(f.id, f.kindChar)
     }
 
-    fun open(context: Context, f: GpsocketClient.CameraFile,
-             partial: Boolean = false): Dest? {
+    // The suffix anchored at the end matches every name labelFor has
+    // produced, including legacy cam_<id4><kind> and photos renamed to .jpg.
+    private val clipNameRx = Regex("""([0-9a-fA-F]{4})([A-Z])\.(avi|jpg)$""")
+
+    /** The [GpsocketClient.CameraFile.uniqueId] a saved file name maps back
+     *  to, or null for a name this app did not write. */
+    fun parseClipName(name: String): Int? {
+        val m = clipNameRx.find(name) ?: return null
+        return (m.groupValues[1].toInt(16) shl 8) or m.groupValues[2][0].code
+    }
+
+    fun open(context: Context, f: GpsocketClient.CameraFile, partial: Boolean = false): Dest? {
         val label = labelFor(f, partial)
         if (Build.VERSION.SDK_INT >= 29) {
             val values = ContentValues().apply {
@@ -49,8 +54,14 @@ object ClipStore {
                 put(MediaStore.Video.Media.IS_PENDING, 1)
             }
             val uri = context.contentResolver.insert(
-                MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values)
-            val out = uri?.let { context.contentResolver.openOutputStream(it) } ?: return null
+                MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                values
+            ) ?: return null
+            val out = runCatching { context.contentResolver.openOutputStream(uri) }.getOrNull()
+            if (out == null) {
+                runCatching { context.contentResolver.delete(uri, null, null) }
+                return null
+            }
             return Dest(label, uri, null, out)
         }
         val fallback = File(context.getExternalFilesDir(Environment.DIRECTORY_MOVIES), label)
@@ -63,43 +74,60 @@ object ClipStore {
     fun commit(context: Context, dest: Dest, isJpeg: Boolean) {
         if (Build.VERSION.SDK_INT >= 29 && dest.uri != null) {
             if (!isJpeg) {
-                context.contentResolver.update(dest.uri, ContentValues().apply {
-                    put(MediaStore.Video.Media.IS_PENDING, 0)
-                }, null, null)
+                context.contentResolver.update(
+                    dest.uri,
+                    ContentValues().apply {
+                        put(MediaStore.Video.Media.IS_PENDING, 0)
+                    },
+                    null,
+                    null
+                )
                 return
             }
             val values = ContentValues().apply {
-                put(MediaStore.Images.Media.DISPLAY_NAME,
-                    dest.label.removeSuffix(".avi") + ".jpg")
+                put(
+                    MediaStore.Images.Media.DISPLAY_NAME,
+                    dest.label.removeSuffix(".avi") + ".jpg"
+                )
                 put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                put(MediaStore.Images.Media.RELATIVE_PATH,
-                    Environment.DIRECTORY_PICTURES + "/EasyDashcam")
+                put(
+                    MediaStore.Images.Media.RELATIVE_PATH,
+                    Environment.DIRECTORY_PICTURES + "/EasyDashcam"
+                )
                 put(MediaStore.Images.Media.IS_PENDING, 1)
             }
             val imgUri = context.contentResolver.insert(
                 MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
-                values) ?: throw java.io.IOException("photo insert failed")
+                values
+            ) ?: throw java.io.IOException("photo insert failed")
             try {
                 context.contentResolver.openInputStream(dest.uri).use { src ->
                     context.contentResolver.openOutputStream(imgUri).use { dst ->
-                        if (src == null || dst == null)
+                        if (src == null || dst == null) {
                             throw java.io.IOException("photo copy failed")
+                        }
                         src.copyTo(dst)
                     }
                 }
-                context.contentResolver.update(imgUri, ContentValues().apply {
-                    put(MediaStore.Images.Media.IS_PENDING, 0)
-                }, null, null)
-                context.contentResolver.delete(dest.uri, null, null)
+                context.contentResolver.update(
+                    imgUri,
+                    ContentValues().apply {
+                        put(MediaStore.Images.Media.IS_PENDING, 0)
+                    },
+                    null,
+                    null
+                )
             } catch (e: Exception) {
                 runCatching { context.contentResolver.delete(imgUri, null, null) }
                 throw e
             }
+            // The photo is published; failing to drop the pending video row
+            // must not delete it. MediaStore expires stale pending rows.
+            runCatching { context.contentResolver.delete(dest.uri, null, null) }
         } else if (isJpeg && dest.fallback != null) {
             dest.fallback.renameTo(
-                File(dest.fallback.parentFile, dest.label.removeSuffix(".avi") + ".jpg"))
-        } else {
-            // API <29 videos: nothing to clear, the file is already final.
+                File(dest.fallback.parentFile, dest.label.removeSuffix(".avi") + ".jpg")
+            )
         }
     }
 

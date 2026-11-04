@@ -8,6 +8,6 @@ class EasyDashcamApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        com.juanm.easydashcam.core.DebugLogger.init(filesDir)
+        if (BuildConfig.DEBUG) com.juanm.easydashcam.core.DebugLogger.init(filesDir)
     }
 }

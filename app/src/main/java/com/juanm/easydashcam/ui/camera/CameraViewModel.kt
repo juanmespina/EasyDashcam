@@ -52,6 +52,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     /** uniqueId → MediaStore uri for files already on the phone. */
     private val _localFiles = MutableStateFlow<Map<Int, Uri>>(emptyMap())
     val localFiles: StateFlow<Map<Int, Uri>> = _localFiles
+
     /** uniqueIds whose local file is a truncated partial-stream save. */
     private val _partialLocal = MutableStateFlow<Set<Int>>(emptySet())
     val partialLocal: StateFlow<Set<Int>> = _partialLocal
@@ -88,48 +89,22 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     private val _notices = MutableStateFlow<List<String>>(emptyList())
     val notices: StateFlow<List<String>> = _notices
 
-    // Debug: rolling log of incoming camera frames, to map the protocol live.
-    private val _frameLog = MutableStateFlow<List<String>>(emptyList())
-    val frameLog: StateFlow<List<String>> = _frameLog
-
     init {
         viewModelScope.launch {
             client.state.collect { s ->
                 val wasConnected = _state.value is GpsocketClient.State.Connected
                 _state.value = s
                 // A fresh session may see a different card — drop caches.
+                // Download state stays: it lives in the process-wide session,
+                // this ViewModel is new on every app reopen, and queued or
+                // failed rows must survive both. refreshLocalFiles drops
+                // finished entries whose file is gone.
                 if (s is GpsocketClient.State.Connected && !wasConnected) {
                     filesFetchedAt = 0
                     settingsLoadedAt = 0
                     _settings.value = null
-                    session.clearDownloads()
-                    restorePersistedFiles()   // show last-known list while refetching
+                    restorePersistedFiles() // show last-known list while refetching
                 }
-            }
-        }
-        viewModelScope.launch {
-            // ~1 Hz heartbeat/status frames flood the log — record them only
-            // when the payload changes, in full. That diff is what the status
-            // blob (recording state, storage %, GPS if any) decodes from.
-            // 0x0503 download chunks are bulk data (each payload differs, so
-            // the dedupe below would log all ~1900 of them per clip).
-            val silentCmds = setOf(0x0503)
-            val quietCmds = setOf(0x0100, 0x0303, 0x0304)
-            val lastSeen = HashMap<Int, ByteArray>()
-            client.frames.collect { f ->
-                if (f.cmd in silentCmds) return@collect
-                if (f.cmd in quietCmds) {
-                    if (lastSeen[f.cmd].contentEquals(f.payload)) return@collect
-                    lastSeen[f.cmd] = f.payload
-                    val hex = f.payload.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
-                    _frameLog.update {
-                        (it + "cmd=0x%04x len=${f.payload.size}  $hex".format(f.cmd)).takeLast(60)
-                    }
-                    return@collect
-                }
-                val head = f.payload.take(32).joinToString("") { "%02x".format(it.toInt() and 0xFF) }
-                val line = "type=${f.type} cmd=0x%04x len=${f.payload.size}  $head".format(f.cmd)
-                _frameLog.update { (it + line).takeLast(60) }
             }
         }
         viewModelScope.launch {
@@ -152,7 +127,8 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                     val p = line.split('|')
                     if (p.size < 4) return@mapNotNull null
                     GpsocketClient.CameraFile(
-                        kind = p[0].toInt(), id = p[1].toInt(),
+                        kind = p[0].toInt(),
+                        id = p[1].toInt(),
                         timestamp = p[2].takeIf { it.isNotEmpty() }
                             ?.let { runCatching { java.time.LocalDateTime.parse(it) }.getOrNull() },
                         size = p[3].toLong()
@@ -165,9 +141,6 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     /** Re-scan Movies/EasyDashcam for clips we already downloaded. */
     fun refreshLocalFiles() {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            // New names are <stamp>_<id4><kind>.<ext>; legacy cam_<id4><kind>.
-            // The suffix anchored at the end matches both.
-            val nameRx = Regex("""([0-9a-fA-F]{4})([A-Z])\.(avi|jpg)$""")
             val out = mutableMapOf<Int, Uri>()
             val partials = mutableSetOf<Int>()
             if (Build.VERSION.SDK_INT < 29) {
@@ -176,8 +149,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 val dir = getApplication<Application>()
                     .getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES)
                 dir?.listFiles()?.forEach { f ->
-                    val m = nameRx.find(f.name) ?: return@forEach
-                    val uid = (m.groupValues[1].toInt(16) shl 8) or m.groupValues[2][0].code
+                    val uid = ClipStore.parseClipName(f.name) ?: return@forEach
                     out[uid] = Uri.fromFile(f)
                     if ("_partial_" in f.name) partials += uid
                 }
@@ -191,18 +163,20 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 )) {
                     getApplication<Application>().contentResolver.query(
                         collection,
-                        arrayOf(MediaStore.MediaColumns._ID,
-                            MediaStore.MediaColumns.DISPLAY_NAME),
+                        arrayOf(
+                            MediaStore.MediaColumns._ID,
+                            MediaStore.MediaColumns.DISPLAY_NAME
+                        ),
                         "(${MediaStore.MediaColumns.RELATIVE_PATH} LIKE 'Movies/EasyDashcam/%'" +
                             " OR ${MediaStore.MediaColumns.RELATIVE_PATH} LIKE 'Pictures/EasyDashcam/%')",
-                        null, null
+                        null,
+                        null
                     )?.use { c ->
                         val idCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
                         val nameCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
                         while (c.moveToNext()) {
                             val name = c.getString(nameCol)
-                            val m = nameRx.find(name) ?: continue
-                            val uid = (m.groupValues[1].toInt(16) shl 8) or m.groupValues[2][0].code
+                            val uid = ClipStore.parseClipName(name) ?: continue
                             out[uid] = ContentUris.withAppendedId(collection, c.getLong(idCol))
                             if ("_partial_" in name) partials += uid
                         }
@@ -222,12 +196,12 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun connect() {
-        _frameLog.value = emptyList()
         viewModelScope.launch {
             if (!session.connect()) {
                 _state.value = GpsocketClient.State.Error(
                     IllegalStateException(
-                        getApplication<Application>().getString(R.string.err_no_wifi))
+                        getApplication<Application>().getString(R.string.err_no_wifi)
+                    )
                 )
             }
         }
@@ -249,8 +223,12 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refreshFiles(force: Boolean = false) {
         if (_filesLoading.value) return
-        if (!force && _files.value != null &&
-            System.currentTimeMillis() - filesFetchedAt < 30_000) return
+        if (!force &&
+            _files.value != null &&
+            System.currentTimeMillis() - filesFetchedAt < 30_000
+        ) {
+            return
+        }
         viewModelScope.launch {
             _filesLoading.value = true
             runCatching { client.listFiles() }
@@ -266,8 +244,10 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                     // cache still lists every record the camera last served,
                     // and On device matches it against MediaStore copies.
                     if (_files.value == null) restorePersistedFiles()
-                    notice(getApplication<Application>()
-                        .getString(R.string.notice_file_list_failed, it.message))
+                    notice(
+                        getApplication<Application>()
+                            .getString(R.string.notice_file_list_failed, it.message)
+                    )
                 }
             _filesLoading.value = false
         }
@@ -276,11 +256,20 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     /** Remove a downloaded clip/photo from MediaStore and refresh the marks. */
     fun deleteLocal(uri: Uri) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            // Pre-29 copies are file:// URIs, which ContentResolver.delete
+            // rejects ("Unknown URL") — delete the file itself.
             val rows = runCatching {
-                getApplication<Application>().contentResolver.delete(uri, null, null)
+                if (uri.scheme == "file") {
+                    if (java.io.File(requireNotNull(uri.path)).delete()) 1 else 0
+                } else {
+                    getApplication<Application>().contentResolver.delete(uri, null, null)
+                }
             }.getOrDefault(0)
-            notice(getApplication<Application>().getString(
-                if (rows > 0) R.string.notice_deleted else R.string.notice_delete_failed))
+            notice(
+                getApplication<Application>().getString(
+                    if (rows > 0) R.string.notice_deleted else R.string.notice_delete_failed
+                )
+            )
             refreshLocalFiles()
         }
     }
@@ -292,16 +281,22 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         if (prev != null && !(prev.done && prev.error != null)) return
         // Mark queued immediately — otherwise the intent is in flight for a
         // while and the row still shows Download, inviting a duplicate queue.
-        session.updateDownload(f.uniqueId,
-            CameraSession.DownloadState(0, f.sizeBytes))
+        session.updateDownload(
+            f.uniqueId,
+            CameraSession.DownloadState(0, f.sizeBytes)
+        )
         runCatching {
             ContextCompat.startForegroundService(
-                getApplication(), DownloadService.downloadIntent(getApplication(), f))
+                getApplication(),
+                DownloadService.downloadIntent(getApplication(), f)
+            )
         }.onFailure {
             // Queued marker would otherwise show a spinner forever.
             session.removeDownload(f.uniqueId)
-            notice(getApplication<Application>()
-                .getString(R.string.notice_file_list_failed, it.message))
+            notice(
+                getApplication<Application>()
+                    .getString(R.string.notice_file_list_failed, it.message)
+            )
         }
     }
 
@@ -322,17 +317,14 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         f: GpsocketClient.CameraFile,
         out: java.io.OutputStream,
         onProgress: (Long, Long) -> Unit
-    ): GpsocketClient.DownloadResult =
-        client.downloadFile(f, out, onProgress = onProgress)
+    ): GpsocketClient.DownloadResult = client.downloadFile(f, out, onProgress = onProgress)
 
     /**
      * Adopt a streamed temp file into the gallery — the bytes are
      * already local, so saving is a copy, not a re-download. A partial
      * stream saves a truncated (still playable) AVI under a marked name.
      */
-    suspend fun saveStreamed(
-        f: GpsocketClient.CameraFile, src: java.io.File, partial: Boolean = false
-    ): Boolean =
+    suspend fun saveStreamed(f: GpsocketClient.CameraFile, src: java.io.File, partial: Boolean = false): Boolean =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             runCatching {
                 val dest = ClipStore.open(getApplication(), f, partial)
@@ -340,10 +332,17 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 val head = ByteArray(4)
                 java.io.FileInputStream(src).use { it.read(head, 0, 4) }
                 val isJpeg = head[0] == 0xFF.toByte() && head[1] == 0xD8.toByte()
-                dest.out.use { o -> src.inputStream().use { it.copyTo(o) } }
-                ClipStore.commit(getApplication(), dest, isJpeg)
-                session.updateDownload(f.uniqueId,
-                    CameraSession.DownloadState(src.length(), src.length(), done = true))
+                runCatching {
+                    dest.out.use { o -> src.inputStream().use { it.copyTo(o) } }
+                    ClipStore.commit(getApplication(), dest, isJpeg)
+                }.onFailure {
+                    ClipStore.fail(getApplication(), dest)
+                    throw it
+                }
+                session.updateDownload(
+                    f.uniqueId,
+                    CameraSession.DownloadState(src.length(), src.length(), done = true)
+                )
                 refreshLocalFiles()
                 true
             }.getOrDefault(false)
@@ -352,9 +351,11 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     private fun persistFiles(files: List<GpsocketClient.CameraFile>) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             runCatching {
-                filesCache.writeText(files.joinToString("\n") { f ->
-                    "${f.kind}|${f.id}|${f.timestamp ?: ""}|${f.size}"
-                })
+                filesCache.writeText(
+                    files.joinToString("\n") { f ->
+                        "${f.kind}|${f.id}|${f.timestamp ?: ""}|${f.size}"
+                    }
+                )
             }
         }
     }
@@ -363,25 +364,30 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
      *  before auto-download was enabled are intentionally left alone. */
     private fun autoEnqueueNew(files: List<GpsocketClient.CameraFile>) {
         val wm = session.autoSyncWatermark ?: return
-        val local = _localFiles.value
-        val dl = session.downloads.value
-        val fresh = files.filter {
-            it.kindChar != 'L' && it.timestamp != null && it.timestamp.isAfter(wm) &&
-                local[it.uniqueId] == null && dl[it.uniqueId] == null
-        }.sortedBy { it.timestamp }.take(10)
+        val known = _localFiles.value.keys + session.downloads.value.keys
+        val fresh = selectAutoDownloads(files, wm, known)
         if (fresh.isEmpty()) return
         fresh.forEach(::download)
         session.autoSyncWatermark = fresh.last().timestamp
-        notice(getApplication<Application>().resources.getQuantityString(
-            R.plurals.notice_auto_download, fresh.size, fresh.size))
+        notice(
+            getApplication<Application>().resources.getQuantityString(
+                R.plurals.notice_auto_download,
+                fresh.size,
+                fresh.size
+            )
+        )
     }
 
     // ---- Settings -----------------------------------------------------------
 
     fun loadSettings(force: Boolean = false) {
         if (_settingsLoading.value) return
-        if (!force && _settings.value != null &&
-            System.currentTimeMillis() - settingsLoadedAt < 30_000) return
+        if (!force &&
+            _settings.value != null &&
+            System.currentTimeMillis() - settingsLoadedAt < 30_000
+        ) {
+            return
+        }
         viewModelScope.launch {
             _settingsLoading.value = true
             runCatching {
@@ -396,8 +402,10 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 _settingValues.value = values
                 settingsLoadedAt = System.currentTimeMillis()
             }.onFailure {
-                notice(getApplication<Application>()
-                    .getString(R.string.notice_settings_failed, it.message))
+                notice(
+                    getApplication<Application>()
+                        .getString(R.string.notice_settings_failed, it.message)
+                )
             }
             _settingsLoading.value = false
         }
@@ -407,101 +415,23 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         val prev = _settingValues.value[id]
         _settingValues.update { it + (id to byteArrayOf(value.toByte())) }
         viewModelScope.launch {
-            if (!client.setParam(id, value)) {
-                notice(getApplication<Application>()
-                    .getString(R.string.notice_setting_rejected, id))
-                if (prev != null) _settingValues.update { it + (id to prev) }
+            // A dead link throws from the socket write before the read loop
+            // notices (up to its 15 s timeout); treat it as a refusal.
+            val applied = try {
+                client.setParam(id, value)
+            } catch (_: java.io.IOException) {
+                false
+            }
+            if (!applied) {
+                notice(
+                    getApplication<Application>()
+                        .getString(R.string.notice_setting_rejected, id)
+                )
+                _settingValues.update { if (prev != null) it + (id to prev) else it - id }
             }
         }
     }
 
-    // ---- Debug actions -------------------------------------------------------
-
-    /** Live-probing API: send a raw GPSOCKET command live. */
-    fun probe(cmd: Int, args: ByteArray = byteArrayOf()) {
-        val argHex = args.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
-        _frameLog.update { (it + "→ TX cmd=0x%04x $argHex".format(cmd)).takeLast(60) }
-        viewModelScope.launch { client.sendRaw(cmd, args) }
-    }
-
-    fun fetchMenu() {
-        viewModelScope.launch {
-            runCatching { client.requestMenuXml() }
-                .onSuccess { log("menu XML: ${it.length} chars") }
-                .onFailure {
-                    val cached = client.lastMenuXml
-                    log("menu re-request failed: ${it.message}" +
-                        (cached?.let { c -> " (init cache: ${c.length} chars)" } ?: ""))
-                }
-        }
-    }
-
-    fun fetchFiles() {
-        viewModelScope.launch {
-            runCatching {
-                val count = client.requestFileCount()
-                log("file count: ${count ?: "?"}")
-                client.listFiles()
-            }.onSuccess { files ->
-                log("${files.size} records:")
-                files.take(8).forEach { log("  $it") }
-                if (files.size > 8) log("  …")
-            }.onFailure { log("file list failed: ${it.message}") }
-        }
-    }
-
-    fun fetchSettings() {
-        viewModelScope.launch {
-            runCatching { client.getParams(SETTING_PARAM_IDS) }
-                .onSuccess { values ->
-                    SETTING_PARAM_IDS.forEach { id ->
-                        val v = values[id]
-                        val disp = when {
-                            v == null || v.isEmpty() -> "no reply"
-                            v.size == 1 -> "0x%02x".format(v[0])
-                            else -> v.toString(Charsets.UTF_8).trimEnd('\u0000')
-                        }
-                        log("param 0x%04x = %s".format(id, disp))
-                    }
-                }
-                .onFailure { log("get params failed: ${it.message}") }
-        }
-    }
-
-    /** Debug: download the smallest recording into app storage. */
-    fun downloadFirst() {
-        viewModelScope.launch {
-            runCatching {
-                val files = client.listFiles()
-                val target = files.minByOrNull { it.size }
-                    ?: return@runCatching log("no files on camera")
-                val dest = java.io.File(
-                    getApplication<Application>().filesDir,
-                    "cam_%04x.avi".format(target.id)
-                )
-                log("downloading $target -> ${dest.name}")
-                var lastLogged = -1L
-                val result = dest.outputStream().use { out ->
-                    client.downloadFile(target, out) { got, total ->
-                        val mb = got / (1024 * 1024)
-                        if (mb != lastLogged) { lastLogged = mb; log("  ${got / 1024}/${total / 1024} KiB") }
-                    }
-                }
-                when (result) {
-                    is GpsocketClient.DownloadResult.Success ->
-                        log("done: ${result.bytes} B -> ${dest.absolutePath}")
-                    is GpsocketClient.DownloadResult.Refused ->
-                        log("camera refused (feff) — stale id or selection expired")
-                    is GpsocketClient.DownloadResult.Incomplete ->
-                        log("stalled at ${result.bytes}/${result.expected} B")
-                    is GpsocketClient.DownloadResult.Failed ->
-                        log("failed: ${result.reason}")
-                }
-            }.onFailure { log("download failed: ${it.message}") }
-        }
-    }
-
-    private fun log(line: String) = _frameLog.update { (it + "» $line").takeLast(60) }
     private fun notice(msg: String) = _notices.update { (it + msg).takeLast(3) }
 
     /** Drop a notice after the snackbar that showed it is dismissed. */
@@ -510,16 +440,29 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     /** User-visible one-shot message (snackbar). */
     fun postNotice(msg: String) = notice(msg)
 
-    companion object {
-        private val SETTING_PARAM_IDS = listOf(
-            0x0000, 0x0003, 0x0004, 0x0005,
-            0x0100, 0x0101, 0x0108,
-            0x0200, 0x0201, 0x0205, 0x0209,
-            0x0300
-        )
-    }
-
     override fun onCleared() {
         // Session lives in the Application — do not tear the socket down here.
     }
+}
+
+/**
+ * Records auto-download should queue: servable, timestamped after [watermark],
+ * not already on the phone or queued ([known] uniqueIds), oldest first, at
+ * most [limit] — except that records sharing the last chosen timestamp all
+ * go together. The watermark moves to that timestamp and the next pass only
+ * takes records strictly after it, so cutting a photo+video pair in half
+ * would skip its other half forever.
+ */
+internal fun selectAutoDownloads(
+    files: List<GpsocketClient.CameraFile>,
+    watermark: java.time.LocalDateTime,
+    known: Set<Int>,
+    limit: Int = 10
+): List<GpsocketClient.CameraFile> {
+    val candidates = files
+        .filter { it.kindChar != 'L' && it.timestamp?.isAfter(watermark) == true && it.uniqueId !in known }
+        .sortedBy { it.timestamp }
+    if (candidates.size <= limit) return candidates
+    val cutAt = candidates[limit - 1].timestamp
+    return candidates.take(limit) + candidates.drop(limit).takeWhile { it.timestamp == cutAt }
 }

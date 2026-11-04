@@ -2,9 +2,6 @@ package com.juanm.easydashcam.ui.files
 
 import android.Manifest
 import android.graphics.Bitmap
-import android.media.AudioAttributes
-import android.media.AudioFormat
-import android.media.AudioTrack
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -53,14 +50,15 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.SyncDisabled
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -69,18 +67,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Slider
-import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -93,26 +89,23 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.juanm.easydashcam.R
 import com.juanm.easydashcam.core.media.AviMjpegPlayer
 import com.juanm.easydashcam.core.net.GpsocketClient
 import com.juanm.easydashcam.core.session.CameraSession
 import com.juanm.easydashcam.ui.camera.CameraViewModel
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.withPermit
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withPermit
 
 /** Files tab — recordings on the camera, with background downloads.
  *  No ConnectionGate: the cached list and On device browsing stay usable
@@ -149,8 +142,12 @@ private fun FilesList(vm: CameraViewModel) {
     val notifPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) {
-        pendingNotif?.let(vm::download); pendingNotif = null
-        if (pendingBatch) { pendingBatch = false; batchTrigger++ }
+        pendingNotif?.let(vm::download)
+        pendingNotif = null
+        if (pendingBatch) {
+            pendingBatch = false
+            batchTrigger++
+        }
     }
 
     val startDownload = { f: GpsocketClient.CameraFile ->
@@ -170,7 +167,10 @@ private fun FilesList(vm: CameraViewModel) {
         }
     }
 
-    LaunchedEffect(Unit) { vm.refreshFiles(); vm.refreshLocalFiles() }
+    LaunchedEffect(Unit) {
+        vm.refreshFiles()
+        vm.refreshLocalFiles()
+    }
 
     var filter by remember { mutableStateOf(MediaFilter.ALL) }
 
@@ -203,8 +203,11 @@ private fun FilesList(vm: CameraViewModel) {
                         localFiles.containsKey(it.uniqueId)
                     }
                 }
-                if (dayFilter == null) byKind
-                else byKind.filter { it.timestamp?.toLocalDate() == dayFilter }
+                if (dayFilter == null) {
+                    byKind
+                } else {
+                    byKind.filter { it.timestamp?.toLocalDate() == dayFilter }
+                }
             }
         }
         // Everything visible that isn't already on the phone or in flight.
@@ -223,7 +226,9 @@ private fun FilesList(vm: CameraViewModel) {
             val m = HashMap<Int, Int>()
             list.orEmpty().zipWithNext().forEach { (newer, older) ->
                 if (newer.kindChar == older.kindChar &&
-                    newer.timestamp != null && older.timestamp != null) {
+                    newer.timestamp != null &&
+                    older.timestamp != null
+                ) {
                     val gap = java.time.Duration
                         .between(older.timestamp, newer.timestamp).seconds
                     if (gap in 30..900) m[older.uniqueId] = gap.toInt()
@@ -237,8 +242,13 @@ private fun FilesList(vm: CameraViewModel) {
         ) {
             if (pending.isNotEmpty()) {
                 TextButton(onClick = startBatch) {
-                    Text(stringResource(R.string.download_all,
-                        pending.size, pending.sumOf { it.size } / 1024f))
+                    Text(
+                        stringResource(
+                            R.string.download_all,
+                            pending.size,
+                            pending.sumOf { it.size } / 1024f
+                        )
+                    )
                 }
             }
             if (dayFilter != null) {
@@ -246,20 +256,27 @@ private fun FilesList(vm: CameraViewModel) {
                     selected = true,
                     onClick = { dayFilter = null },
                     label = {
-                        Text(dayFilter!!.format(
-                            DateTimeFormatter.ofPattern("MMM d", Locale.getDefault())))
+                        Text(
+                            dayFilter!!.format(
+                                DateTimeFormatter.ofPattern("MMM d", Locale.getDefault())
+                            )
+                        )
                     },
                     trailingIcon = {
-                        Icon(Icons.Default.Close,
+                        Icon(
+                            Icons.Default.Close,
                             contentDescription = stringResource(R.string.clear_filter),
-                            modifier = Modifier.size(16.dp))
+                            modifier = Modifier.size(16.dp)
+                        )
                     }
                 )
             }
             Box {
                 IconButton(onClick = { filterMenu = true }) {
-                    Icon(Icons.Default.FilterAlt,
-                        contentDescription = stringResource(R.string.filter_by_date))
+                    Icon(
+                        Icons.Default.FilterAlt,
+                        contentDescription = stringResource(R.string.filter_by_date)
+                    )
                 }
                 DropdownMenu(expanded = filterMenu, onDismissRequest = { filterMenu = false }) {
                     val today = LocalDate.now()
@@ -270,28 +287,41 @@ private fun FilesList(vm: CameraViewModel) {
                     ).forEach { (label, day) ->
                         DropdownMenuItem(
                             text = { Text(label + if (day == dayFilter) " ✓" else "") },
-                            onClick = { dayFilter = day; filterMenu = false }
+                            onClick = {
+                                dayFilter = day
+                                filterMenu = false
+                            }
                         )
                     }
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.date_pick)) },
-                        onClick = { pickDay = true; filterMenu = false }
+                        onClick = {
+                            pickDay = true
+                            filterMenu = false
+                        }
                     )
                 }
             }
             Box {
                 IconButton(onClick = { sortMenu = true }) {
-                    Icon(Icons.AutoMirrored.Filled.Sort,
-                        contentDescription = stringResource(R.string.sort))
+                    Icon(
+                        Icons.AutoMirrored.Filled.Sort,
+                        contentDescription = stringResource(R.string.sort)
+                    )
                 }
                 DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
                     SortMode.entries.forEach { mode ->
                         DropdownMenuItem(
                             text = {
-                                Text(stringResource(mode.labelRes) +
-                                    if (mode == sortMode) " ✓" else "")
+                                Text(
+                                    stringResource(mode.labelRes) +
+                                        if (mode == sortMode) " ✓" else ""
+                                )
                             },
-                            onClick = { sortMode = mode; sortMenu = false }
+                            onClick = {
+                                sortMode = mode
+                                sortMenu = false
+                            }
                         )
                     }
                 }
@@ -301,9 +331,13 @@ private fun FilesList(vm: CameraViewModel) {
                 Icon(
                     if (autoDl) Icons.Default.Sync else Icons.Default.SyncDisabled,
                     contentDescription = stringResource(
-                        if (autoDl) R.string.auto_download_on else R.string.auto_download_off),
-                    tint = if (autoDl) MaterialTheme.colorScheme.primary
-                           else androidx.compose.material3.LocalContentColor.current
+                        if (autoDl) R.string.auto_download_on else R.string.auto_download_off
+                    ),
+                    tint = if (autoDl) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        androidx.compose.material3.LocalContentColor.current
+                    }
                 )
             }
             IconButton(onClick = { viewMode = viewMode.next() }) {
@@ -313,127 +347,154 @@ private fun FilesList(vm: CameraViewModel) {
                         ViewMode.GRID -> Icons.Default.GridView
                         ViewMode.TIMELINE -> Icons.Default.Timeline
                     },
-                    contentDescription = stringResource(R.string.view_mode_switch,
-                        stringResource(viewMode.labelRes))
+                    contentDescription = stringResource(
+                        R.string.view_mode_switch,
+                        stringResource(viewMode.labelRes)
+                    )
                 )
             }
         }
-    PullToRefreshBox(
-        isRefreshing = loading,
-        onRefresh = { vm.refreshFiles(force = true); vm.refreshLocalFiles() },
-        modifier = Modifier.fillMaxSize().weight(1f)
-    ) {
-        when {
-            // PullToRefreshBox already shows its indicator while loading —
-            // a second centered spinner made tab switches flash twice.
-            list == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                if (!loading) Text(stringResource(R.string.pull_to_refresh))
-            }
-            list.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(stringResource(if (files.isNullOrEmpty()) R.string.no_recordings
-                     else R.string.nothing_matches))
-            }
-            else -> {
-                // Days always run newest-first; the sort option orders within
-                // each day so the structure stays readable.
-                val grouped = remember(list, sortMode) {
-                    list.groupBy { it.timestamp?.toLocalDate() }
-                        .entries.sortedWith(
-                            compareBy(nullsLast(reverseOrder<LocalDate>())) { it.key })
-                        .map { it.key to it.value.sortedWith(sortMode.comparator) }
+        PullToRefreshBox(
+            isRefreshing = loading,
+            onRefresh = {
+                vm.refreshFiles(force = true)
+                vm.refreshLocalFiles()
+            },
+            modifier = Modifier.fillMaxSize().weight(1f)
+        ) {
+            when {
+                // PullToRefreshBox already shows its indicator while loading —
+                // a second centered spinner made tab switches flash twice.
+                list == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    if (!loading) Text(stringResource(R.string.pull_to_refresh))
                 }
-                if (viewMode == ViewMode.GRID) {
-                    LazyVerticalGrid(
-                        columns = GridCells.Adaptive(minSize = 170.dp),
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        grouped.forEach { (day, dayFiles) ->
-                            item(key = "h$day", span = { GridItemSpan(maxLineSpan) }) {
-                                DayHeader(day)
+                list.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        stringResource(
+                            if (files.isNullOrEmpty()) {
+                                R.string.no_recordings
+                            } else {
+                                R.string.nothing_matches
                             }
-                            itemsIndexed(
-                                dayFiles,
-                                key = { i, f -> "${f.uniqueId}_${f.timestamp}_$i" }
-                            ) { _, f ->
-                                val uri = localFiles[f.uniqueId]
-                                FileTile(
-                                    file = f,
-                                    download = downloads[f.uniqueId],
-                                    durationSec = durations[f.uniqueId],
-                                    localUri = uri,
-                                    partial = f.uniqueId in partialLocal,
-                                    onDownload = { startDownload(f) },
-                                    onPlay = uri?.let { { playing = it to (f.kindChar == 'J') } },
-                                    onStream = if (uri == null) { { streaming = f } } else null,
-                                    onLongPress = uri?.let { { actionsFor = it to f } },
-                                    onCancel = { vm.cancelDownload(f.uniqueId) }
-                                )
-                            }
-                        }
-                        if (lockedCount > 0) {
-                            item(key = "locked_footer", span = { GridItemSpan(maxLineSpan) }) {
-                                LockedFooter(lockedCount)
-                            }
-                        }
-                        item(key = "storage_footer", span = { GridItemSpan(maxLineSpan) }) {
-                            StorageFooter()
-                        }
+                        )
+                    )
+                }
+                else -> {
+                    // Days always run newest-first; the sort option orders within
+                    // each day so the structure stays readable.
+                    val grouped = remember(list, sortMode) {
+                        list.groupBy { it.timestamp?.toLocalDate() }
+                            .entries.sortedWith(
+                                compareBy(nullsLast(reverseOrder<LocalDate>())) { it.key }
+                            )
+                            .map { it.key to it.value.sortedWith(sortMode.comparator) }
                     }
-                } else {
-                    LazyColumn(Modifier.fillMaxSize()) {
-                        grouped.forEach { (day, dayFiles) ->
-                            item(key = "h$day") { DayHeader(day) }
-                            val sorted = dayFiles
-                            sorted.forEachIndexed { i, f ->
-                                val uri = localFiles[f.uniqueId]
-                                item(key = "${f.uniqueId}_${f.timestamp}_$i") {
-                                    if (viewMode == ViewMode.TIMELINE) {
-                                        TimelineRow(f, i == 0, i == sorted.lastIndex,
-                                            downloads[f.uniqueId], durations[f.uniqueId],
-                                            uri, f.uniqueId in partialLocal,
-                                            { startDownload(f) },
-                                            uri?.let { { playing = it to (f.kindChar == 'J') } },
-                                            if (uri == null) { { streaming = f } } else null,
-                                            uri?.let { { actionsFor = it to f } },
-                                            { vm.cancelDownload(f.uniqueId) })
-                                    } else {
-                                        FileRow(
-                                            file = f,
-                                            download = downloads[f.uniqueId],
-                                            durationSec = durations[f.uniqueId],
-                                            localUri = uri,
-                                            partial = f.uniqueId in partialLocal,
-                                            onDownload = { startDownload(f) },
-                                            onPlay = uri?.let { { playing = it to (f.kindChar == 'J') } },
-                                            onStream = if (uri == null) { { streaming = f } } else null,
-                                            onLongPress = uri?.let { { actionsFor = it to f } },
-                                            onCancel = { vm.cancelDownload(f.uniqueId) }
-                                        )
-                                    }
-                                    HorizontalDivider()
+                    if (viewMode == ViewMode.GRID) {
+                        LazyVerticalGrid(
+                            columns = GridCells.Adaptive(minSize = 170.dp),
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            grouped.forEach { (day, dayFiles) ->
+                                item(key = "h$day", span = { GridItemSpan(maxLineSpan) }) {
+                                    DayHeader(day)
                                 }
-                                // Timeline mode marks recording gaps — the
-                                // spaces where the camera was off matter as
-                                // much as the clips.
-                                if (viewMode == ViewMode.TIMELINE) {
-                                    val next = sorted.getOrNull(i + 1)
-                                    if (f.timestamp != null && next?.timestamp != null) {
-                                        val gap = java.time.Duration
-                                            .between(next.timestamp, f.timestamp).seconds
-                                        if (gap > 900) item(key = "gap_$i") { GapRow(gap) }
+                                itemsIndexed(
+                                    dayFiles,
+                                    key = { i, f -> "${f.uniqueId}_${f.timestamp}_$i" }
+                                ) { _, f ->
+                                    val uri = localFiles[f.uniqueId]
+                                    FileTile(
+                                        file = f,
+                                        download = downloads[f.uniqueId],
+                                        durationSec = durations[f.uniqueId],
+                                        localUri = uri,
+                                        partial = f.uniqueId in partialLocal,
+                                        onDownload = { startDownload(f) },
+                                        onPlay = uri?.let { { playing = it to (f.kindChar == 'J') } },
+                                        onStream = if (uri == null) {
+                                            { streaming = f }
+                                        } else {
+                                            null
+                                        },
+                                        onLongPress = uri?.let { { actionsFor = it to f } },
+                                        onCancel = { vm.cancelDownload(f.uniqueId) }
+                                    )
+                                }
+                            }
+                            if (lockedCount > 0) {
+                                item(key = "locked_footer", span = { GridItemSpan(maxLineSpan) }) {
+                                    LockedFooter(lockedCount)
+                                }
+                            }
+                            item(key = "storage_footer", span = { GridItemSpan(maxLineSpan) }) {
+                                StorageFooter()
+                            }
+                        }
+                    } else {
+                        LazyColumn(Modifier.fillMaxSize()) {
+                            grouped.forEach { (day, dayFiles) ->
+                                item(key = "h$day") { DayHeader(day) }
+                                val sorted = dayFiles
+                                sorted.forEachIndexed { i, f ->
+                                    val uri = localFiles[f.uniqueId]
+                                    item(key = "${f.uniqueId}_${f.timestamp}_$i") {
+                                        if (viewMode == ViewMode.TIMELINE) {
+                                            TimelineRow(
+                                                f, i == 0, i == sorted.lastIndex,
+                                                downloads[f.uniqueId], durations[f.uniqueId],
+                                                uri, f.uniqueId in partialLocal,
+                                                { startDownload(f) },
+                                                uri?.let { { playing = it to (f.kindChar == 'J') } },
+                                                if (uri == null) {
+                                                    { streaming = f }
+                                                } else {
+                                                    null
+                                                },
+                                                uri?.let { { actionsFor = it to f } },
+                                                { vm.cancelDownload(f.uniqueId) }
+                                            )
+                                        } else {
+                                            FileRow(
+                                                file = f,
+                                                download = downloads[f.uniqueId],
+                                                durationSec = durations[f.uniqueId],
+                                                localUri = uri,
+                                                partial = f.uniqueId in partialLocal,
+                                                onDownload = { startDownload(f) },
+                                                onPlay = uri?.let { { playing = it to (f.kindChar == 'J') } },
+                                                onStream = if (uri == null) {
+                                                    { streaming = f }
+                                                } else {
+                                                    null
+                                                },
+                                                onLongPress = uri?.let { { actionsFor = it to f } },
+                                                onCancel = { vm.cancelDownload(f.uniqueId) }
+                                            )
+                                        }
+                                        HorizontalDivider()
+                                    }
+                                    // Timeline mode marks recording gaps — the
+                                    // spaces where the camera was off matter as
+                                    // much as the clips.
+                                    if (viewMode == ViewMode.TIMELINE) {
+                                        val next = sorted.getOrNull(i + 1)
+                                        if (f.timestamp != null && next?.timestamp != null) {
+                                            val gap = java.time.Duration
+                                                .between(next.timestamp, f.timestamp).seconds
+                                            if (gap > 900) item(key = "gap_$i") { GapRow(gap) }
+                                        }
                                     }
                                 }
                             }
+                            if (lockedCount > 0) {
+                                item(key = "locked_footer") { LockedFooter(lockedCount) }
+                            }
+                            item(key = "storage_footer") { StorageFooter() }
                         }
-                        if (lockedCount > 0) {
-                            item(key = "locked_footer") { LockedFooter(lockedCount) }
-                        }
-                        item(key = "storage_footer") { StorageFooter() }
                     }
                 }
             }
         }
-    }
     }
 
     if (pickDay) {
@@ -459,33 +520,53 @@ private fun FilesList(vm: CameraViewModel) {
         ) { DatePicker(state = dp) }
     }
     playing?.let { (uri, isImage) ->
-        PlayerDialog(uri = uri, remote = null, isImage = isImage, vm = vm,
-            onClose = { playing = null })
+        PlayerDialog(
+            uri = uri,
+            remote = null,
+            isImage = isImage,
+            vm = vm,
+            onClose = { playing = null }
+        )
     }
     streaming?.let { f ->
-        PlayerDialog(uri = null, remote = f, isImage = f.kindChar == 'J', vm = vm,
-            onClose = { streaming = null })
+        PlayerDialog(
+            uri = null,
+            remote = f,
+            isImage = f.kindChar == 'J',
+            vm = vm,
+            onClose = { streaming = null }
+        )
     }
     actionsFor?.let { (uri, f) ->
         AlertDialog(
             onDismissRequest = { actionsFor = null },
             title = {
-                Text(f.timestamp?.format(
-                    DateTimeFormatter.ofPattern("MMM d, HH:mm:ss", Locale.getDefault()))
-                    ?: stringResource(R.string.downloaded_file))
+                Text(
+                    f.timestamp?.format(
+                        DateTimeFormatter.ofPattern("MMM d, HH:mm:ss", Locale.getDefault())
+                    )
+                        ?: stringResource(R.string.downloaded_file)
+                )
             },
             text = { Text(stringResource(R.string.local_copy)) },
             confirmButton = {
                 Row {
                     TextButton(onClick = {
-                        playing = uri to (f.kindChar == 'J'); actionsFor = null
+                        playing = uri to (f.kindChar == 'J')
+                        actionsFor = null
                     }) { Text(stringResource(R.string.play)) }
                     TextButton(onClick = {
-                        shareFile(context, uri, f.kindChar == 'J'); actionsFor = null
+                        shareFile(context, uri, f.kindChar == 'J')
+                        actionsFor = null
                     }) { Text(stringResource(R.string.share)) }
-                    TextButton(onClick = { vm.deleteLocal(uri); actionsFor = null }) {
-                        Text(stringResource(R.string.delete),
-                            color = MaterialTheme.colorScheme.error)
+                    TextButton(onClick = {
+                        vm.deleteLocal(uri)
+                        actionsFor = null
+                    }) {
+                        Text(
+                            stringResource(R.string.delete),
+                            color = MaterialTheme.colorScheme.error
+                        )
                     }
                 }
             },
@@ -503,29 +584,29 @@ private data class ClipMeta(val thumb: Bitmap?, val durationSec: Int?)
 
 private object ClipMetaCache {
     private val cache = android.util.LruCache<String, ClipMeta>(64)
+
     // Fling past a day of downloaded clips and every visible row fires a
     // probe + JPEG decode — bound it or the tablet's CPU is the bottleneck.
     private val gate = kotlinx.coroutines.sync.Semaphore(3)
 
     fun get(uri: Uri): ClipMeta? = cache.get(uri.toString())
-    suspend fun load(context: android.content.Context, uri: Uri): ClipMeta =
-        get(uri) ?: gate.withPermit {
-            get(uri) ?: kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                runCatching {
-                    context.contentResolver.openFileDescriptor(uri, "r")!!.use { pfd ->
-                        AviMjpegPlayer(java.io.FileInputStream(pfd.fileDescriptor).channel).use { p ->
-                            p.probe()   // header only — no 'movi' walk
-                            ClipMeta(
-                                thumb = p.thumbnail(360),
-                                durationSec = p.probeDurationSec?.let { (it + 0.5).toInt() }
-                            )
-                        }
+    suspend fun load(context: android.content.Context, uri: Uri): ClipMeta = get(uri) ?: gate.withPermit {
+        get(uri) ?: kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                context.contentResolver.openFileDescriptor(uri, "r")!!.use { pfd ->
+                    AviMjpegPlayer(java.io.FileInputStream(pfd.fileDescriptor).channel).use { p ->
+                        p.probe() // header only — no 'movi' walk
+                        ClipMeta(
+                            thumb = p.thumbnail(360),
+                            durationSec = p.probeDurationSec?.let { (it + 0.5).toInt() }
+                        )
                     }
-                }.getOrDefault(ClipMeta(null, null))
-                // Don't cache failures — a transient error (e.g. file still
-                // being finalized) shouldn't hide the thumbnail forever.
-            }.also { if (it.thumb != null || it.durationSec != null) cache.put(uri.toString(), it) }
-        }
+                }
+            }.getOrDefault(ClipMeta(null, null))
+            // Don't cache failures — a transient error (e.g. file still
+            // being finalized) shouldn't hide the thumbnail forever.
+        }.also { if (it.thumb != null || it.durationSec != null) cache.put(uri.toString(), it) }
+    }
 }
 
 private fun shareFile(context: android.content.Context, uri: Uri, isImage: Boolean) {
@@ -533,31 +614,42 @@ private fun shareFile(context: android.content.Context, uri: Uri, isImage: Boole
     // API 24+, so route them through the FileProvider.
     val shareUri = if (uri.scheme == "file") {
         androidx.core.content.FileProvider.getUriForFile(
-            context, "${context.packageName}.fileprovider", java.io.File(uri.path!!))
-    } else uri
+            context,
+            "${context.packageName}.fileprovider",
+            java.io.File(uri.path!!)
+        )
+    } else {
+        uri
+    }
     val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
         type = if (isImage) "image/jpeg" else "video/*"
         putExtra(android.content.Intent.EXTRA_STREAM, shareUri)
         addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
-    context.startActivity(android.content.Intent.createChooser(
-        send, context.getString(R.string.share_clip)))
+    context.startActivity(
+        android.content.Intent.createChooser(
+            send,
+            context.getString(R.string.share_clip)
+        )
+    )
 }
 
 private enum class MediaFilter(@param:StringRes val labelRes: Int) {
-    ALL(R.string.filter_all), VIDEOS(R.string.filter_videos),
-    PHOTOS(R.string.filter_photos), ON_DEVICE(R.string.filter_on_device)
+    ALL(R.string.filter_all),
+    VIDEOS(R.string.filter_videos),
+    PHOTOS(R.string.filter_photos),
+    ON_DEVICE(R.string.filter_on_device)
 }
 
 private enum class ViewMode(@param:StringRes val labelRes: Int) {
-    LIST(R.string.view_list), GRID(R.string.view_grid), TIMELINE(R.string.view_timeline);
+    LIST(R.string.view_list),
+    GRID(R.string.view_grid),
+    TIMELINE(R.string.view_timeline);
+
     fun next() = entries[(ordinal + 1) % entries.size]
 }
 
-private enum class SortMode(
-    @param:StringRes val labelRes: Int,
-    val comparator: Comparator<GpsocketClient.CameraFile>
-) {
+private enum class SortMode(@param:StringRes val labelRes: Int, val comparator: Comparator<GpsocketClient.CameraFile>) {
     NEWEST(R.string.sort_newest, compareByDescending { it.timestamp }),
     OLDEST(R.string.sort_oldest, compareBy { it.timestamp }),
     LARGEST(R.string.sort_largest, compareByDescending { it.size }),
@@ -613,8 +705,13 @@ private fun fileDetail(
             append(stringResource(R.string.detail_eta, it))
         }
         if (stillRecording) append(stringResource(R.string.detail_still_recording))
-        if (local) append(stringResource(
-            if (partial) R.string.detail_partial else R.string.detail_downloaded))
+        if (local) {
+            append(
+                stringResource(
+                    if (partial) R.string.detail_partial else R.string.detail_downloaded
+                )
+            )
+        }
     }
 }
 
@@ -640,28 +737,45 @@ private fun TimelineRow(
     ListItem(
         leadingContent = {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(Modifier.size(2.dp, 18.dp)
-                    .background(if (first) Color.Transparent else rail))
-                Box(Modifier.size(10.dp)
-                    .background(MaterialTheme.colorScheme.primary, CircleShape))
-                Box(Modifier.size(2.dp, 18.dp)
-                    .background(if (last) Color.Transparent else rail))
+                Box(
+                    Modifier.size(2.dp, 18.dp)
+                        .background(if (first) Color.Transparent else rail)
+                )
+                Box(
+                    Modifier.size(10.dp)
+                        .background(MaterialTheme.colorScheme.primary, CircleShape)
+                )
+                Box(
+                    Modifier.size(2.dp, 18.dp)
+                        .background(if (last) Color.Transparent else rail)
+                )
             }
         },
         headlineContent = {
-            Text(file.timestamp?.format(DateTimeFormatter.ofPattern("HH:mm:ss"))
-                ?: stringResource(R.string.id_fallback, file.id))
+            Text(
+                file.timestamp?.format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+                    ?: stringResource(R.string.id_fallback, file.id)
+            )
         },
         supportingContent = {
-            Text(fileDetail(file, meta?.durationSec ?: durationSec, download,
-                localUri != null, partial))
+            Text(
+                fileDetail(
+                    file,
+                    meta?.durationSec ?: durationSec,
+                    download,
+                    localUri != null,
+                    partial
+                )
+            )
         },
         trailingContent = {
             DownloadTrailing(download, localUri != null, onDownload, onPlay, onStream, onCancel)
         },
-        modifier = if (onLongPress != null)
+        modifier = if (onLongPress != null) {
             Modifier.combinedClickable(onClick = {}, onLongClick = onLongPress)
-        else Modifier
+        } else {
+            Modifier
+        }
     )
 }
 
@@ -674,9 +788,11 @@ private fun GapRow(gapSec: Long) {
     ) {
         HorizontalDivider(Modifier.weight(1f))
         Text(
-            if (gapSec >= 3600)
+            if (gapSec >= 3600) {
                 stringResource(R.string.gap_hours, gapSec / 3600, gapSec % 3600 / 60)
-            else stringResource(R.string.gap_minutes, gapSec / 60),
+            } else {
+                stringResource(R.string.gap_minutes, gapSec / 60)
+            },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -699,7 +815,10 @@ private fun rememberClipMeta(uri: Uri?): ClipMeta? {
 private fun LockedFooter(count: Int) {
     Text(
         androidx.compose.ui.res.pluralStringResource(
-            R.plurals.locked_clips_hidden, count, count),
+            R.plurals.locked_clips_hidden,
+            count,
+            count
+        ),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(16.dp)
@@ -711,8 +830,10 @@ private fun StorageFooter() {
     val context = LocalContext.current
     val free = remember {
         runCatching {
-            StatFs(context.getExternalFilesDir(null)?.absolutePath
-                ?: Environment.getExternalStorageDirectory().path).availableBytes
+            StatFs(
+                context.getExternalFilesDir(null)?.absolutePath
+                    ?: Environment.getExternalStorageDirectory().path
+            ).availableBytes
         }.getOrNull()
     }
     if (free != null) {
@@ -737,7 +858,7 @@ private fun FileRow(
     onPlay: (() -> Unit)?,
     onStream: (() -> Unit)?,
     onLongPress: (() -> Unit)? = null,
-    onCancel: (() -> Unit)? = null,
+    onCancel: (() -> Unit)? = null
 ) {
     val icon = kindIcon(file)
     val kindDesc = kindLabel(file)
@@ -745,24 +866,39 @@ private fun FileRow(
     ListItem(
         leadingContent = {
             meta?.thumb?.let {
-                Image(bitmap = it.asImageBitmap(), contentDescription = kindDesc,
-                    contentScale = ContentScale.Crop, modifier = Modifier.size(48.dp))
+                Image(
+                    bitmap = it.asImageBitmap(),
+                    contentDescription = kindDesc,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.size(48.dp)
+                )
             } ?: Icon(icon, contentDescription = kindDesc)
         },
         headlineContent = {
-            Text(file.timestamp?.format(DateTimeFormatter.ofPattern("HH:mm:ss"))
-                ?: stringResource(R.string.id_fallback, file.id))
+            Text(
+                file.timestamp?.format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+                    ?: stringResource(R.string.id_fallback, file.id)
+            )
         },
         supportingContent = {
-            Text(fileDetail(file, meta?.durationSec ?: durationSec, download,
-                localUri != null, partial))
+            Text(
+                fileDetail(
+                    file,
+                    meta?.durationSec ?: durationSec,
+                    download,
+                    localUri != null,
+                    partial
+                )
+            )
         },
         trailingContent = {
             DownloadTrailing(download, localUri != null, onDownload, onPlay, onStream, onCancel)
         },
-        modifier = if (onLongPress != null)
+        modifier = if (onLongPress != null) {
             Modifier.combinedClickable(onClick = {}, onLongClick = onLongPress)
-        else Modifier
+        } else {
+            Modifier
+        }
     )
 }
 
@@ -778,25 +914,31 @@ private fun FileTile(
     onPlay: (() -> Unit)?,
     onStream: (() -> Unit)?,
     onLongPress: (() -> Unit)?,
-    onCancel: (() -> Unit)? = null,
+    onCancel: (() -> Unit)? = null
 ) {
     val icon = kindIcon(file)
     val kindDesc = kindLabel(file)
     val meta = rememberClipMeta(localUri)
     Card(
         Modifier.padding(4.dp).then(
-            if (onPlay != null || onLongPress != null)
+            if (onPlay != null || onLongPress != null) {
                 Modifier.combinedClickable(
                     onClick = { onPlay?.invoke() },
-                    onLongClick = { onLongPress?.invoke() })
-            else Modifier
+                    onLongClick = { onLongPress?.invoke() }
+                )
+            } else {
+                Modifier
+            }
         )
     ) {
         Column {
             meta?.thumb?.let {
-                Image(bitmap = it.asImageBitmap(), contentDescription = kindDesc,
+                Image(
+                    bitmap = it.asImageBitmap(),
+                    contentDescription = kindDesc,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxWidth().height(110.dp))
+                    modifier = Modifier.fillMaxWidth().height(110.dp)
+                )
             }
             Column(Modifier.padding(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -809,8 +951,13 @@ private fun FileTile(
                     )
                 }
                 Text(
-                    fileDetail(file, meta?.durationSec ?: durationSec, download,
-                localUri != null, partial),
+                    fileDetail(
+                        file,
+                        meta?.durationSec ?: durationSec,
+                        download,
+                        localUri != null,
+                        partial
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -834,19 +981,23 @@ private fun DownloadTrailing(
     Row(verticalAlignment = Alignment.CenterVertically) {
         // Streams straight from the camera — plays while the bytes arrive,
         // nothing kept on the phone unless the user saves it.
-        if (onStream != null) IconButton(onClick = onStream) {
-            Icon(
-                Icons.Default.PlayArrow,
-                contentDescription = stringResource(R.string.action_stream),
-                tint = MaterialTheme.colorScheme.secondary
-            )
+        if (onStream != null) {
+            IconButton(onClick = onStream) {
+                Icon(
+                    Icons.Default.PlayArrow,
+                    contentDescription = stringResource(R.string.action_stream),
+                    tint = MaterialTheme.colorScheme.secondary
+                )
+            }
         }
         when {
             download?.error != null -> IconButton(onClick = onDownload) {
                 Icon(
                     Icons.Default.ErrorOutline,
                     contentDescription = stringResource(
-                        R.string.download_failed_retry, download.error ?: ""),
+                        R.string.download_failed_retry,
+                        download.error ?: ""
+                    ),
                     tint = MaterialTheme.colorScheme.error,
                     modifier = Modifier.size(20.dp)
                 )
@@ -866,10 +1017,12 @@ private fun DownloadTrailing(
                     } else {
                         CircularProgressIndicator(modifier = Modifier.size(28.dp))
                     }
-                    Icon(Icons.Default.Close,
+                    Icon(
+                        Icons.Default.Close,
                         contentDescription = stringResource(R.string.cancel),
                         tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(16.dp))
+                        modifier = Modifier.size(16.dp)
+                    )
                 }
             }
             onPlay != null -> IconButton(onClick = onPlay) {
@@ -885,8 +1038,10 @@ private fun DownloadTrailing(
                 tint = MaterialTheme.colorScheme.primary
             )
             else -> IconButton(onClick = onDownload) {
-                Icon(Icons.Default.Download,
-                    contentDescription = stringResource(R.string.download))
+                Icon(
+                    Icons.Default.Download,
+                    contentDescription = stringResource(R.string.download)
+                )
             }
         }
     }
@@ -907,16 +1062,6 @@ private fun PlayerDialog(
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
-    var frame by remember(uri, remote) { mutableStateOf<Bitmap?>(null) }
-    var error by remember(uri, remote) { mutableStateOf<String?>(null) }
-    var pos by remember(uri, remote) { mutableIntStateOf(0) }
-    var paused by remember(uri, remote) { mutableStateOf(false) }
-    var indexed by remember(uri, remote) { mutableStateOf(false) }
-    var buffering by remember(uri, remote) { mutableStateOf(false) }
-    var streamGot by remember(uri, remote) { mutableLongStateOf(0L) }
-    var streamTotal by remember(uri, remote) { mutableLongStateOf(0L) }
-    var streamDone by remember(uri, remote) { mutableStateOf(remote == null) }
-    var indexedFrames by remember(uri, remote) { mutableIntStateOf(0) }
     var saved by remember(uri, remote) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
@@ -937,152 +1082,45 @@ private fun PlayerDialog(
             when {
                 uri != null -> AviMjpegPlayer(
                     android.os.ParcelFileDescriptor.AutoCloseInputStream(
-                        context.contentResolver.openFileDescriptor(uri, "r")!!).channel)
+                        context.contentResolver.openFileDescriptor(uri, "r")!!
+                    ).channel
+                )
                 tmpFile != null -> AviMjpegPlayer(java.io.FileInputStream(tmpFile).channel)
                 else -> null
             }
         }.getOrNull()
     }
 
-    DisposableEffect(player) { onDispose { player?.close(); tmpFile?.delete() } }
-
-    LaunchedEffect(player) {
-        if (player == null) {
-            error = context.getString(R.string.err_file_unavailable); return@LaunchedEffect
-        }
-        try {
-            var fetchErr: String? = null
-            if (remote != null) {
-                launch(kotlinx.coroutines.Dispatchers.IO) {
-                    try {
-                        java.io.FileOutputStream(tmpFile!!).use { fos ->
-                            var lastMs = 0L
-                            when (val r = vm.streamFile(remote, fos) { got, total ->
-                                val now = System.currentTimeMillis()
-                                // Throttle: the callback fires per 32 KiB chunk.
-                                if (now - lastMs >= 300 || got >= total) {
-                                    lastMs = now
-                                    streamGot = got; streamTotal = total
-                                }
-                            }) {
-                                is GpsocketClient.DownloadResult.Success -> {}
-                                is GpsocketClient.DownloadResult.Refused ->
-                                    fetchErr = context.getString(R.string.err_camera_refused)
-                                is GpsocketClient.DownloadResult.Incomplete ->
-                                    fetchErr = context.getString(R.string.err_transfer_stopped)
-                                is GpsocketClient.DownloadResult.Failed ->
-                                    fetchErr = r.reason
-                            }
-                        }
-                    } finally {
-                        streamDone = true
-                    }
-                }
-            }
-            // Wait until something is playable: local clips index once;
-            // streams extend the index as chunks arrive.
-            if (remote == null) {
-                player.index()
-            } else if (isImage) {
-                while (!streamDone) delay(150)
-                fetchErr?.let { error = it; return@LaunchedEffect }
-                player.index()
-            } else {
-                while (player.frames.isEmpty() && !streamDone) {
-                    player.extendIndex()
-                    if (player.frames.isEmpty()) delay(150)
-                }
-                player.extendIndex()
-            }
-            fetchErr?.let { error = it; return@LaunchedEffect }
-            if (player.frames.isEmpty()) {
-                error = context.getString(R.string.err_no_video_frames); return@LaunchedEffect
-            }
-            indexedFrames = player.frames.size
-            indexed = true
-            // Audio: PCM chunks feed a self-clocking AudioTrack; seeks move the
-            // PCM read position to match the video frame time.
-            // Hoisted so the outer finally can stop() a write stuck on a
-            // full buffer — a blocking write doesn't observe cancellation.
-            var audioTrack: AudioTrack? = null
-            val audioJob = if (!player.hasAudio) null else launch {
-                val buf = ByteArray(8192)
-                val track = AudioTrack.Builder()
-                    .setAudioAttributes(AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE).build())
-                    .setAudioFormat(AudioFormat.Builder()
-                        .setSampleRate(player.audioRate)
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setChannelMask(if (player.audioChannels == 1)
-                            AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO)
-                        .build())
-                    .setTransferMode(AudioTrack.MODE_STREAM)
-                    .build()
-                audioTrack = track
-                if (track.state != AudioTrack.STATE_INITIALIZED) { track.release(); return@launch }
-                var bytePos = 0L
-                var lastVideoPos = -1
-                var streaming = false
-                try {
-                    while (isActive) {
-                        if (paused || pos >= player.frames.size) {
-                            if (streaming) { track.pause(); streaming = false }
-                            delay(60); continue
-                        }
-                        if (!streaming) { track.play(); streaming = true }
-                        if (pos != lastVideoPos + 1) {   // seek or restart
-                            bytePos = player.audioPosForMs(pos * player.frameMs)
-                            track.pause(); track.flush(); track.play()
-                        }
-                        lastVideoPos = pos
-                        val n = player.audioRead(bytePos, buf)
-                        if (n <= 0) { delay(60); continue }
-                        bytePos += n
-                        track.write(buf, 0, n)   // blocks — paces the playback
-                    }
-                } finally {
-                    runCatching { track.stop() }
-                    track.release()
-                }
-            }
-            var lastDecoded = -1
-            try {
-                while (true) {
-                    // Streaming: index whatever arrived since the last pass —
-                    // the scan resumes at the last complete chunk, so this is
-                    // ~one header read per iteration when idle.
-                    if (remote != null) {
-                        player.extendIndex()
-                        if (indexedFrames != player.frames.size)
-                            indexedFrames = player.frames.size
-                    }
-                    if (pos >= player.frames.size) {
-                        if (streamDone) { paused = true }   // real EOF
-                        else { buffering = true; delay(120); continue }
-                    }
-                    // Decode when playing, or once after the slider moved while paused.
-                    if (paused && pos == lastDecoded) { delay(80); continue }
-                    if (pos >= player.frames.size) { delay(80); continue }
-                    buffering = false
-                    frame = player.frameAt(pos)
-                    lastDecoded = pos
-                    if (paused) { delay(80); continue }
-                    pos++
-                    delay(player.frameMs)
-                }
-            } finally {
-                audioJob?.cancel()
-                // Unblock a write() stuck on a full buffer — it doesn't
-                // observe cancellation, so it would delay the release.
-                audioTrack?.let { runCatching { it.stop() } }
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            error = e.message ?: e.javaClass.simpleName
+    DisposableEffect(player) {
+        onDispose {
+            player?.close()
+            tmpFile?.delete()
         }
     }
+
+    val playback = remember(player) {
+        player?.let { p ->
+            ClipPlayback(
+                p,
+                isImage,
+                fetch = remote?.let { r ->
+                    { onProgress ->
+                        java.io.FileOutputStream(tmpFile!!).use { vm.streamFile(r, it, onProgress) }
+                    }
+                }
+            )
+        }
+    }
+    LaunchedEffect(playback) { playback?.run() }
+    val st = playback?.state?.collectAsStateWithLifecycle()?.value ?: ClipPlayback.State()
+    val error = if (playback == null) {
+        stringResource(R.string.err_file_unavailable)
+    } else {
+        st.failure?.let { failureText(it) }
+    }
+    val frame = st.frame
+    val pos = st.pos
+    val paused = st.paused
 
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         // Immersive while the player is up — a swipe still reveals the bars.
@@ -1103,19 +1141,22 @@ private fun PlayerDialog(
                     modifier = Modifier.align(Alignment.Center).padding(24.dp)
                 )
                 frame != null -> Image(
-                    bitmap = frame!!.asImageBitmap(),
+                    bitmap = frame.asImageBitmap(),
                     contentDescription = stringResource(R.string.playback),
                     contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize()
                 )
                 else -> CircularProgressIndicator(Modifier.align(Alignment.Center))
             }
-            if (remote != null && (buffering || streamTotal > 0)) {
+            if (remote != null && (st.buffering || st.streamTotal > 0)) {
                 Text(
-                    if (buffering && streamTotal > 0)
-                        stringResource(R.string.buffering_pct, streamGot * 100f / streamTotal)
-                    else if (buffering) stringResource(R.string.buffering)
-                    else stringResource(R.string.streaming_pct, streamGot * 100f / streamTotal),
+                    if (st.buffering && st.streamTotal > 0) {
+                        stringResource(R.string.buffering_pct, st.streamGot * 100f / st.streamTotal)
+                    } else if (st.buffering) {
+                        stringResource(R.string.buffering)
+                    } else {
+                        stringResource(R.string.streaming_pct, st.streamGot * 100f / st.streamTotal)
+                    },
                     color = Color.White,
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.align(Alignment.TopStart)
@@ -1129,10 +1170,16 @@ private fun PlayerDialog(
                 // re-pulling them over the socket. Allowed once frames are
                 // indexed — a truncated AVI still plays to its last whole
                 // chunk, so the user can keep just the part they watched.
-                if (remote != null && error == null && (streamDone || indexed)) {
+                val playable = st.streamDone || st.indexed
+                if (remote != null && error == null && playable) {
                     IconButton(onClick = {
                         scope.launch {
-                            saved = vm.saveStreamed(remote, tmpFile!!, partial = !streamDone)
+                            // A stalled or failed stream is truncated even once it has ended.
+                            saved = vm.saveStreamed(
+                                remote,
+                                tmpFile!!,
+                                partial = st.transfer !is GpsocketClient.DownloadResult.Success
+                            )
                         }
                     }, enabled = !saved) {
                         Icon(
@@ -1144,27 +1191,30 @@ private fun PlayerDialog(
                 }
                 if (uri != null) {
                     IconButton(onClick = { shareFile(context, uri, isImage) }) {
-                        Icon(Icons.Default.Share,
+                        Icon(
+                            Icons.Default.Share,
                             contentDescription = stringResource(R.string.share),
-                            tint = Color.White)
+                            tint = Color.White
+                        )
                     }
                 }
                 IconButton(onClick = onClose) {
-                    Icon(Icons.Default.Close,
+                    Icon(
+                        Icons.Default.Close,
                         contentDescription = stringResource(R.string.close),
-                        tint = Color.White)
+                        tint = Color.White
+                    )
                 }
             }
             val pl = player
-            if (indexed && pl != null && indexedFrames > 1) {
-                val count = indexedFrames
+            val controls = playback?.takeIf { st.indexed && st.frameCount > 1 }
+            if (controls != null && pl != null) {
+                val count = st.frameCount
                 val skip = (1000L / pl.frameMs.coerceAtLeast(1)).toInt().coerceAtLeast(1)
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(16.dp)) {
                     Slider(
                         value = pos.toFloat(),
-                        onValueChange = {
-                            pos = it.toInt().coerceIn(0, count - 1)
-                        },
+                        onValueChange = { controls.seekTo(it.toInt()) },
                         valueRange = 0f..(count - 1).toFloat()
                     )
                     Row(
@@ -1172,31 +1222,35 @@ private fun PlayerDialog(
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = { pos = (pos - skip).coerceAtLeast(0); paused = false }) {
-                            Icon(Icons.Default.Replay10,
-                                contentDescription = stringResource(R.string.back_1s),
-                                tint = Color.White)
-                        }
-                        IconButton(onClick = {
-                            paused = !paused
-                            if (!paused && pos >= count) pos = 0
-                        }) {
+                        IconButton(onClick = { controls.skip(-skip) }) {
                             Icon(
-                                if (paused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                                contentDescription = stringResource(
-                                    if (paused) R.string.play else R.string.pause),
+                                Icons.Default.Replay10,
+                                contentDescription = stringResource(R.string.back_1s),
                                 tint = Color.White
                             )
                         }
-                        IconButton(onClick = { pos = (pos + skip).coerceAtMost(count - 1); paused = false }) {
-                            Icon(Icons.Default.Forward10,
+                        IconButton(onClick = controls::togglePause) {
+                            Icon(
+                                if (paused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                                contentDescription = stringResource(
+                                    if (paused) R.string.play else R.string.pause
+                                ),
+                                tint = Color.White
+                            )
+                        }
+                        IconButton(onClick = { controls.skip(skip) }) {
+                            Icon(
+                                Icons.Default.Forward10,
                                 contentDescription = stringResource(R.string.forward_1s),
-                                tint = Color.White)
+                                tint = Color.White
+                            )
                         }
                         Text(
-                            stringResource(R.string.player_position,
+                            stringResource(
+                                R.string.player_position,
                                 pos * pl.frameMs / 1000.0,
-                                pl.probeDurationSec ?: pl.durationSec),
+                                pl.probeDurationSec ?: pl.durationSec
+                            ),
                             color = Color.White,
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.padding(start = 16.dp)
@@ -1205,5 +1259,18 @@ private fun PlayerDialog(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun failureText(failure: ClipPlayback.Failure): String = when (failure) {
+    is ClipPlayback.Failure.Crash -> failure.message
+    ClipPlayback.Failure.NoFrames -> stringResource(R.string.err_no_video_frames)
+    is ClipPlayback.Failure.Transfer -> when (val r = failure.result) {
+        is GpsocketClient.DownloadResult.Refused -> stringResource(R.string.err_camera_refused)
+        is GpsocketClient.DownloadResult.Incomplete -> stringResource(R.string.err_transfer_stopped)
+        is GpsocketClient.DownloadResult.Failed -> r.reason
+        is GpsocketClient.DownloadResult.NotConnected -> stringResource(R.string.dl_err_not_connected)
+        is GpsocketClient.DownloadResult.Success -> ""
     }
 }

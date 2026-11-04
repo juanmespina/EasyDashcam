@@ -109,7 +109,7 @@
     <string name="save_snapshot">Guardar captura</string>
     <string name="snapshot_saved">Captura guardada en Fotos</string>
     <string name="snapshot_failed">Error al guardar la captura</string>
-    <string name="download_in_progress">Descarga en curso — la vista previa puede pausarse</string>
+    <string name="download_in_progress">Vista en vivo en pausa mientras se descarga. Se reanuda al terminar.</string>
 
     <!-- Settings -->
     <string name="no_settings">No hay ajustes disponibles</string>
@@ -146,6 +146,7 @@
     <string name="notif_download_failed">Descarga fallida: %1$s</string>
     <string name="dl_err_no_dest">sin destino</string>
     <string name="dl_err_cancelled">cancelado</string>
+    <string name="dl_err_not_connected">sin conexión con la cámara</string>
     <string name="dl_err_refused">la cámara lo rechazó (¿aún grabando?)</string>
     <string name="dl_err_stalled">detenido en %1$d/%2$d B</string>
 

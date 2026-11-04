@@ -75,8 +75,8 @@ private fun SettingsList(vm: CameraViewModel) {
                         )
                     }
                     itemsIndexed(
-                        cat.settings.filter { it.type != 0x01 },   // skip action rows (Format, reset)
-                        key = { i, s -> "${s.id}_$i" }   // menu ids are not guaranteed unique
+                        cat.settings.filter { it.type != 0x01 }, // skip action rows (Format, reset)
+                        key = { i, s -> "${s.id}_$i" } // menu ids are not guaranteed unique
                     ) { _, s ->
                         SettingRow(
                             setting = s,
@@ -90,8 +90,12 @@ private fun SettingsList(vm: CameraViewModel) {
                     ListItem(
                         headlineContent = { Text(stringResource(R.string.app_name)) },
                         supportingContent = {
-                            Text(stringResource(R.string.about_version,
-                                com.juanm.easydashcam.BuildConfig.VERSION_NAME))
+                            Text(
+                                stringResource(
+                                    R.string.about_version,
+                                    com.juanm.easydashcam.BuildConfig.VERSION_NAME
+                                )
+                            )
                         }
                     )
                 }
@@ -137,7 +141,10 @@ private fun SettingRow(setting: CameraSetting, raw: ByteArray?, onChange: (Int) 
                             setting.options.forEach { opt ->
                                 DropdownMenuItem(
                                     text = { Text(opt.name) },
-                                    onClick = { open = false; onChange(opt.id) }
+                                    onClick = {
+                                        open = false
+                                        onChange(opt.id)
+                                    }
                                 )
                             }
                         }
@@ -145,14 +152,19 @@ private fun SettingRow(setting: CameraSetting, raw: ByteArray?, onChange: (Int) 
                 }
             )
         }
-        else -> ListItem(   // read-only (e.g. Version) — may be a string param
+        else -> ListItem( // read-only (e.g. Version) — may be a string param
             headlineContent = { Text(setting.name) },
             supportingContent = supporting,
             trailingContent = {
-                Text(setting.options.firstOrNull()?.name ?: raw?.let {
-                    if (it.size > 1) String(it, Charsets.UTF_8).trimEnd(' ', '\u0000')
-                    else "0x%02x".format(value ?: 0)
-                } ?: "…")
+                Text(
+                    setting.options.firstOrNull()?.name ?: raw?.let {
+                        if (it.size > 1) {
+                            String(it, Charsets.UTF_8).trimEnd(' ', '\u0000')
+                        } else {
+                            "0x%02x".format(value ?: 0)
+                        }
+                    } ?: "…"
+                )
             }
         )
     }

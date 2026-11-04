@@ -108,7 +108,7 @@
     <string name="save_snapshot">Save snapshot</string>
     <string name="snapshot_saved">Snapshot saved to Pictures</string>
     <string name="snapshot_failed">Snapshot failed</string>
-    <string name="download_in_progress">Download in progress — preview may pause</string>
+    <string name="download_in_progress">Live view paused while a download runs. It resumes when the download ends.</string>
 
     <!-- Settings -->
     <string name="no_settings">No settings available</string>
@@ -145,6 +145,7 @@
     <string name="notif_download_failed">Download failed: %1$s</string>
     <string name="dl_err_no_dest">no destination</string>
     <string name="dl_err_cancelled">cancelled</string>
+    <string name="dl_err_not_connected">not connected to the camera</string>
     <string name="dl_err_refused">camera refused (still recording?)</string>
     <string name="dl_err_stalled">stalled at %1$d/%2$d B</string>
 

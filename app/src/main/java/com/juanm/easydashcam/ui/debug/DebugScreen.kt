@@ -57,8 +57,10 @@ fun DebugScreen(
             }
         }
         Spacer(Modifier.height(16.dp))
-        Text(stringResource(R.string.dbg_camera_frames),
-            style = MaterialTheme.typography.labelLarge)
+        Text(
+            stringResource(R.string.dbg_camera_frames),
+            style = MaterialTheme.typography.labelLarge
+        )
         Spacer(Modifier.height(8.dp))
         LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
             items(frameLog) { line ->
@@ -74,16 +76,24 @@ fun DebugScreen(
 
 private fun shareLog(context: android.content.Context) {
     val src = DebugLogger.logFile ?: return
+    DebugLogger.flush()
     val shareDir = java.io.File(context.cacheDir, "share").apply { mkdirs() }
     val dst = java.io.File(shareDir, "easydashcam-debug.log")
     runCatching { src.copyTo(dst, overwrite = true) }.onFailure { return }
     val uri = FileProvider.getUriForFile(
-        context, "${context.packageName}.fileprovider", dst)
+        context,
+        "${context.packageName}.fileprovider",
+        dst
+    )
     val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
         type = "text/plain"
         putExtra(android.content.Intent.EXTRA_STREAM, uri)
         addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
-    context.startActivity(android.content.Intent.createChooser(
-        send, context.getString(R.string.dbg_share_title)))
+    context.startActivity(
+        android.content.Intent.createChooser(
+            send,
+            context.getString(R.string.dbg_share_title)
+        )
+    )
 }

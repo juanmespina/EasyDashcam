@@ -1,23 +1,21 @@
 package com.juanm.easydashcam.core.settings
 
 import android.util.Xml
-import org.xmlpull.v1.XmlPullParser
 import java.io.StringReader
+import org.xmlpull.v1.XmlPullParser
 
 /** One selectable value of an enum setting. */
 data class SettingOption(val name: String, val id: Int)
 
 /** A settings entry from camera_menu.xml. type: 0x00 enum, 0x01 action, 0x03 read-only. */
-data class CameraSetting(
-    val name: String,
-    val id: Int,
-    val type: Int,
-    val options: List<SettingOption>
-) {
+data class CameraSetting(val name: String, val id: Int, val type: Int, val options: List<SettingOption>) {
     val isEnum get() = type == 0x00 && options.isNotEmpty()
+
     /** Two-option On/Off pairs render as a switch instead of a dropdown. */
-    val isToggle get() = isEnum && options.size == 2 &&
-        options[0].name.equals("Off", true) && options[1].name.equals("On", true)
+    val isToggle get() = isEnum &&
+        options.size == 2 &&
+        options[0].name.equals("Off", true) &&
+        options[1].name.equals("On", true)
 }
 
 data class SettingCategory(val name: String, val settings: List<CameraSetting>)
@@ -35,7 +33,7 @@ val SETTING_DESCRIPTIONS = mapOf(
     0x0200 to com.juanm.easydashcam.R.string.setdesc_0200,
     0x0201 to com.juanm.easydashcam.R.string.setdesc_0201,
     0x0205 to com.juanm.easydashcam.R.string.setdesc_0205,
-    0x0209 to com.juanm.easydashcam.R.string.setdesc_0209,
+    0x0209 to com.juanm.easydashcam.R.string.setdesc_0209
 )
 
 /** Parses the camera's settings menu document into UI-ready categories. */
@@ -66,7 +64,10 @@ object MenuParser {
             if (name != null && id != null) {
                 settings += CameraSetting(name!!, id!!, type, options.toList())
             }
-            name = null; id = null; type = 0; options.clear()
+            name = null
+            id = null
+            type = 0
+            options.clear()
         }
 
         var event = parser.eventType
@@ -76,17 +77,25 @@ object MenuParser {
                     text = null
                     when (parser.name) {
                         "Category" -> flushCategory().also { category = null }
-                        "Setting" -> { inSetting = true; flushSetting() }
+                        "Setting" -> {
+                            inSetting = true
+                            flushSetting()
+                        }
                         "Value" -> inValue = true
                     }
                 }
                 XmlPullParser.TEXT -> text = parser.text
                 XmlPullParser.END_TAG -> when (parser.name) {
                     "Category" -> flushCategory().also { category = null }
-                    "Setting" -> { flushSetting(); inSetting = false }
+                    "Setting" -> {
+                        flushSetting()
+                        inSetting = false
+                    }
                     "Value" -> {
                         if (optName != null && optId != null) options += SettingOption(optName!!, optId!!)
-                        optName = null; optId = null; inValue = false
+                        optName = null
+                        optId = null
+                        inValue = false
                     }
                     "Name" -> when {
                         inValue -> optName = text

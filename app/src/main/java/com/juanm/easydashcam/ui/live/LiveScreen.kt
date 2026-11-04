@@ -48,15 +48,15 @@ import com.juanm.easydashcam.R
 import com.juanm.easydashcam.core.net.RtspMjpegClient
 import com.juanm.easydashcam.ui.camera.CameraViewModel
 import com.juanm.easydashcam.ui.components.ConnectionGate
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /** Live tab — RTSP MJPEG stream from the camera. */
 @Composable
@@ -66,8 +66,13 @@ fun LiveScreen(vm: CameraViewModel) {
     // Modes are global on the camera: a download steals the preview channel.
     val transferActive by vm.transferActive.collectAsStateWithLifecycle()
     ConnectionGate(state = state, onConnect = vm::connect) {
-        LivePlayer(cameraHost, transferActive,
-            vm::enterPreviewMode, vm::exitPreviewMode, vm::postNotice)
+        LivePlayer(
+            cameraHost,
+            transferActive,
+            vm::enterPreviewMode,
+            vm::exitPreviewMode,
+            vm::postNotice
+        )
     }
 }
 
@@ -102,8 +107,8 @@ private fun LivePlayer(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, e ->
             if (e == Lifecycle.Event.ON_STOP) {
-                client.stop()       // UDP only — lets run() send TEARDOWN
-                onDisarmed()        // drop GPSOCKET preview mode too
+                client.stop() // UDP only — lets run() send TEARDOWN
+                onDisarmed() // drop GPSOCKET preview mode too
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -113,11 +118,23 @@ private fun LivePlayer(
             onDisarmed()
         }
     }
-    LaunchedEffect(lifecycleOwner) {
+    // Camera modes are global: a download switches it to file mode and the
+    // RTP push stops. Pause instead of timing out into an error, and start
+    // over (re-arming preview mode) once the transfer ends.
+    LaunchedEffect(lifecycleOwner, transferActive) {
+        if (transferActive) {
+            client.stop()
+            status = Status.Paused
+            return@LaunchedEffect
+        }
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             status = Status.Buffering
             try {
-                runCatching { onArmed() }   // GPSOCKET preview mode (0x01)
+                try {
+                    onArmed() // GPSOCKET preview mode (0x01)
+                } catch (_: java.io.IOException) {
+                    // RTSP still tries; its handshake reports a dead camera.
+                }
                 client.run { bmp ->
                     frame = bmp
                     if (status != Status.Playing) status = Status.Playing
@@ -160,6 +177,11 @@ private fun LivePlayer(
                 color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.align(Alignment.Center).padding(16.dp)
             )
+            Status.Paused -> Text(
+                stringResource(R.string.download_in_progress),
+                color = Color.White,
+                modifier = Modifier.align(Alignment.Center).padding(16.dp)
+            )
             Status.Ended -> Text(
                 stringResource(R.string.stream_ended),
                 color = Color.White,
@@ -173,10 +195,14 @@ private fun LivePlayer(
                     client.setAudioMuted(muted)
                 }) {
                     Icon(
-                        if (muted) Icons.AutoMirrored.Filled.VolumeOff
-                        else Icons.AutoMirrored.Filled.VolumeUp,
+                        if (muted) {
+                            Icons.AutoMirrored.Filled.VolumeOff
+                        } else {
+                            Icons.AutoMirrored.Filled.VolumeUp
+                        },
                         contentDescription = stringResource(
-                            if (muted) R.string.unmute else R.string.mute),
+                            if (muted) R.string.unmute else R.string.mute
+                        ),
                         tint = Color.White
                     )
                 }
@@ -196,18 +222,6 @@ private fun LivePlayer(
                 }
             }
         }
-        if (transferActive) {
-            Text(
-                stringResource(R.string.download_in_progress),
-                color = Color.White,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 8.dp)
-                    .background(Color.Black.copy(alpha = 0.6f))
-                    .padding(horizontal = 12.dp, vertical = 4.dp)
-            )
-        }
     }
 }
 
@@ -226,17 +240,21 @@ private fun saveSnapshot(context: Context, bmp: Bitmap): Boolean {
         put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/EasyDashcam")
     }
     val uri = context.contentResolver.insert(
-        MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values)
+        MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+        values
+    )
         ?: return false
-    return context.contentResolver.openOutputStream(uri)?.use {
-        bmp.compress(Bitmap.CompressFormat.JPEG, 95, it)
-        true
-    } == true
+    val ok = runCatching {
+        context.contentResolver.openOutputStream(uri)?.use { bmp.compress(Bitmap.CompressFormat.JPEG, 95, it) } == true
+    }.getOrDefault(false)
+    if (!ok) runCatching { context.contentResolver.delete(uri, null, null) }
+    return ok
 }
 
 private sealed interface Status {
     data object Buffering : Status
     data object Playing : Status
     data object Ended : Status
+    data object Paused : Status
     data class Error(val msg: String) : Status
 }

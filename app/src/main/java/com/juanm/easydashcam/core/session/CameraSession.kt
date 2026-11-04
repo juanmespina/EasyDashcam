@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import com.juanm.easydashcam.core.net.CameraNetworkBinder
 import com.juanm.easydashcam.core.net.GpsocketClient
 import kotlinx.coroutines.CoroutineScope
@@ -49,11 +50,6 @@ class CameraSession(context: Context) {
         _downloads.update { it - id }
     }
 
-    /** Drop all transfer state — a reconnect may be looking at a new card. */
-    fun clearDownloads() {
-        _downloads.value = emptyMap()
-    }
-
     // ---- Auto-download -----------------------------------------------------
     // When enabled, refreshFiles() enqueues only records newer than the
     // watermark — clips that existed before enabling are left alone.
@@ -66,8 +62,9 @@ class CameraSession(context: Context) {
     fun setAutoDownload(on: Boolean) {
         // Re-enabling after a gap re-bases the watermark — otherwise every
         // clip recorded while it was off would queue as "new" all at once.
-        if (on && !_autoDownload.value)
+        if (on && !_autoDownload.value) {
             autoSyncWatermark = java.time.LocalDateTime.now()
+        }
         prefs.edit().putBoolean("auto_download", on).apply()
         _autoDownload.value = on
     }
@@ -75,14 +72,15 @@ class CameraSession(context: Context) {
     var autoSyncWatermark: java.time.LocalDateTime?
         get() = prefs.getString("auto_ts", null)
             ?.let { runCatching { java.time.LocalDateTime.parse(it) }.getOrNull() }
-        set(v) { prefs.edit().putString("auto_ts", v?.toString()).apply() }
+        set(v) {
+            prefs.edit().putString("auto_ts", v?.toString()).apply()
+        }
 
     // Auto-reconnect: once a connection succeeded, a Wi-Fi network coming back
     // (camera rebooted, hotspot re-joined) re-arms the socket — unless the user
     // explicitly disconnected.
     private var hadConnection = false
     private var userDisconnected = false
-    private var wifiPresent = false
 
     init {
         scope.launch {
@@ -90,24 +88,43 @@ class CameraSession(context: Context) {
                 if (it is GpsocketClient.State.Connected) hadConnection = true
             }
         }
+        // Watch Wi-Fi networks, not the default network: the camera hotspot
+        // has no internet, so with mobile data on it is never the default
+        // and a default-network callback never sees it come back.
+        val wifi = NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build()
         val cm = context.getSystemService(ConnectivityManager::class.java)
-        cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
-            override fun onCapabilitiesChanged(n: Network, caps: NetworkCapabilities) {
-                if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) && !wifiPresent) {
-                    wifiPresent = true
-                    maybeReconnect()
+        cm.registerNetworkCallback(
+            wifi,
+            object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(n: Network) {
+                    scope.launch { maybeReconnect() }
+                }
+
+                // A dropped hotspot sends no FIN; without this the socket
+                // reads as Connected until its 15 s timeout, and a network
+                // that returns inside that window never triggers a reconnect.
+                override fun onLost(n: Network) {
+                    if (n != cm.boundNetworkForProcess) return
+                    scope.launch { if (!userDisconnected) client.disconnect() }
                 }
             }
-            override fun onLost(n: Network) {
-                wifiPresent = false
-            }
-        })
+        )
     }
 
+    // The hotspot is often announced before its addresses are ready, and the
+    // camera's server boots after its Wi-Fi: retry a few times instead of
+    // giving up on one early attempt.
     private fun maybeReconnect() {
         if (!hadConnection || userDisconnected) return
-        if (client.state.replayCache.firstOrNull() is GpsocketClient.State.Disconnected) {
-            scope.launch { runCatching { connect() } }
+        scope.launch {
+            repeat(RECONNECT_ATTEMPTS) {
+                val s = client.state.replayCache.firstOrNull()
+                if (userDisconnected || s is GpsocketClient.State.Connected || s is GpsocketClient.State.Connecting) {
+                    return@launch
+                }
+                runCatching { connect() }
+                kotlinx.coroutines.delay(RECONNECT_DELAY_MS)
+            }
         }
     }
 
@@ -124,7 +141,8 @@ class CameraSession(context: Context) {
         for (host in listOf(gateway, GpsocketClient.CAMERA_HOST).distinct()) {
             client.connect(host)
             if (client.state.replayCache.firstOrNull()
-                    is GpsocketClient.State.Connected) {
+                    is GpsocketClient.State.Connected
+            ) {
                 _cameraHost.value = host
                 break
             }
@@ -139,3 +157,6 @@ class CameraSession(context: Context) {
         binder.unbind()
     }
 }
+
+private const val RECONNECT_ATTEMPTS = 3
+private const val RECONNECT_DELAY_MS = 3_000L
