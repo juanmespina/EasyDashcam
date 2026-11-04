@@ -1,0 +1,38 @@
+name: Bug report
+description: Something in the app does not work as expected.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead. Include the error message if the app showed one.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Connect to the camera
+        2. Open Files
+        3. ...
+  - type: input
+    id: app
+    attributes:
+      label: App version
+      description: For example `0.3.0`.
+    validations:
+      required: true
+  - type: input
+    id: phone
+    attributes:
+      label: Phone model and Android version
+      description: For example `Redmi Note 10S, Android 13`.
+    validations:
+      required: true
+  - type: input
+    id: camera
+    attributes:
+      label: Camera version
+      description: The text on the camera's Settings > Version screen.

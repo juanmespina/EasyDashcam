@@ -71,6 +71,10 @@ Debug builds also expose a diagnostics screen with a protocol frame log through 
 
 Download `app-release.apk` from the [latest release](https://github.com/juanmespina/EasyDashcam/releases/latest) and open it on your phone. Android asks you to allow installing apps from your browser or file manager the first time.
 
+To get updates automatically, add `https://github.com/juanmespina/EasyDashcam` to [Obtainium](https://github.com/ImranR98/Obtainium).
+
+Found a bug, or tested another camera? [Open an issue](https://github.com/juanmespina/EasyDashcam/issues/new/choose).
+
 ## How it works
 
 1. Turn on your dashcam and enable its Wi-Fi hotspot.
