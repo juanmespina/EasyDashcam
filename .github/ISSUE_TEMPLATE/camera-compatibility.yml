@@ -1,0 +1,55 @@
+name: Camera compatibility report
+description: Tell us whether Easy Dashcam works with your camera.
+title: "Camera: "
+labels: [compatibility]
+body:
+  - type: input
+    id: model
+    attributes:
+      label: Camera model
+      description: The brand and model printed on the camera or its box.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Camera version
+      description: The text on the camera's Settings > Version screen, for example `1084-w90-WIFI-7789 20250306 V1.0`.
+    validations:
+      required: true
+  - type: input
+    id: wifi
+    attributes:
+      label: Camera Wi-Fi name
+      description: For example `wifi-camera_xxxxxxxx`. Replace the last characters with x.
+  - type: checkboxes
+    id: works
+    attributes:
+      label: What works?
+      options:
+        - label: Connect
+        - label: Live view
+        - label: Live audio
+        - label: File list
+        - label: Download a video
+        - label: Download a photo
+        - label: Play a downloaded video
+        - label: Read settings
+        - label: Change a setting
+  - type: input
+    id: app
+    attributes:
+      label: App version
+      description: For example `0.3.0`.
+    validations:
+      required: true
+  - type: input
+    id: phone
+    attributes:
+      label: Phone model and Android version
+      description: For example `Redmi Note 10S, Android 13`.
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Anything that failed, and the error message the app showed.
