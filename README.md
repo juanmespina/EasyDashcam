@@ -20,7 +20,7 @@ Easy Dashcam is an alternative to the Viidure workflow, focused on local access 
 
 ## Why replace Viidure?
 
-The original motivation for Easy Dashcam was Viidure's ad-heavy experience, paid membership restrictions on basic features, and observed connections to external, third-party servers while browsing the camera. Accessing recordings on your own camera should not require those extras.
+The original motivation for Easy Dashcam was Viidure's ad-heavy experience and observed connections to external, third-party servers while browsing the camera. Accessing recordings on your own camera should not require those extras.
 
 Easy Dashcam talks directly to the camera on its own Wi-Fi hotspot — no account, no ads, no telemetry, and no cloud connection.
 
@@ -141,6 +141,8 @@ Kotlin 2.0.21, Android Gradle Plugin 8.7.3, Gradle 8.9, compile/target SDK 35, m
 RTSP/MJPEG live viewing (`RtspMjpegClient`) and AVI/MJPEG playback (`AviMjpegPlayer`) use custom implementations, with no media library.
 
 ## Contributing
+
+Easy Dashcam is a hobby project maintained by one person who owns one camera, so support for other cameras grows through [compatibility reports](https://github.com/juanmespina/EasyDashcam/issues/new?template=camera-compatibility.yml). Report security problems as described in [SECURITY.md](SECURITY.md).
 
 Issues and pull requests are welcome. Before opening a pull request, run the same checks as CI:
 
