@@ -98,7 +98,7 @@ The target camera hosts a Wi-Fi access point at `192.168.100.1`:
 - TCP `8080` — RTSP session at `rtsp://192.168.100.1:8080/?action=stream`, without authentication. Media travels over UDP: MJPEG video (RTP payload type 26) and an L16 audio track.
 - Live media requires entering GPSOCKET preview mode before playback. Camera modes are shared between preview, settings, and file transfers.
 
-See [AGENTS.md](AGENTS.md) for protocol details, [the captured settings menu](docs/camera_menu.xml), and [the crash course](docs/crash-course.md) for an implementation tour. Code review notes ([October](docs/code-review-2026-10.md), [November](docs/code-review-2026-11.md)), [the roadmap](docs/roadmap.md), and [the privacy policy](docs/store/privacy-policy.md) are under `docs/`.
+See [AGENTS.md](AGENTS.md) for protocol details and [the captured settings menu](docs/camera_menu.xml) for the settings map. [The privacy policy](docs/store/privacy-policy.md) is under `docs/`.
 
 ## Build
 
@@ -134,7 +134,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 Kotlin 2.0.21, Android Gradle Plugin 8.7.3, Gradle 8.9, compile/target SDK 35, minimum SDK 26, Jetpack Compose (BOM 2024.12.01, Material 3), MVVM, and coroutines 1.9.0. Java/Kotlin bytecode targets Java 17; the build uses JDK 21.
 
-RTSP/MJPEG live viewing (`RtspMjpegClient`) and AVI/MJPEG playback (`AviMjpegPlayer`) use custom implementations, with no media library. See [docs/crash-course.md](docs/crash-course.md) for the implementation tour.
+RTSP/MJPEG live viewing (`RtspMjpegClient`) and AVI/MJPEG playback (`AviMjpegPlayer`) use custom implementations, with no media library.
 
 ## Contributing
 

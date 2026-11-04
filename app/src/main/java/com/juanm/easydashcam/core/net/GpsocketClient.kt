@@ -26,8 +26,7 @@ import kotlinx.coroutines.withContext
 /**
  * Client for the camera's GPSOCKET protocol (TCP 8081 on 192.168.100.1).
  *
- * Wire format (little-endian), reverse-engineered from pcaps of the Viidure app
- * (see docs/recon/pcap_11oct_analysis.txt):
+ * Wire format (little-endian), reverse-engineered from pcaps of the Viidure app:
  *
  *   | "GPSOCKET" (8 bytes magic) | type u16 | cmd u16 | body — shape depends on cmd |
  *
