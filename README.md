@@ -111,7 +111,7 @@ Use Android Studio or a command-line Android SDK installation with SDK Platform 
 ./gradlew :app:testDebugUnitTest    # JVM unit tests
 ```
 
-The application ID is `com.juanm.easydashcam`; the current version is `0.2.1` (version code 3). Debug APK output: `app/build/outputs/apk/debug/app-debug.apk`.
+The application ID is `com.juanm.easydashcam`; the current version is `0.3.0` (version code 4). Debug APK output: `app/build/outputs/apk/debug/app-debug.apk`.
 
 Release signing is optional: put a keystore and a `keystore.properties` file at the repository root. The properties file and `*.jks` / `*.keystore` files are gitignored. Merely placing a keystore there is not enough; configure all four properties:
 
