@@ -82,6 +82,7 @@ Camera communication stays on the local network. The app does not require an acc
 
 ## Compatibility and limitations
 
+- Tested with a camera whose Settings > Version screen shows `1084-w90-WIFI-7789` and firmware `20250306 V1.0`.
 - The implementation targets the reverse-engineered GPSOCKET camera protocol described below. Compatibility with every camera supported by Viidure is not guaranteed.
 - Your camera is likely compatible if it works with Viidure, its Wi-Fi network is named like `wifi-camera_xxxxxxxx`, and it uses the address `192.168.100.1`. If yours works or does not, please open an issue with its model.
 - Live preview and downloads use different camera modes and cannot operate independently at the same time. A download can interrupt the live feed.

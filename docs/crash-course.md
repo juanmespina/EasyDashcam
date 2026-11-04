@@ -120,7 +120,7 @@ For a web dev: `magic` is message-boundary marker + protocol identifier in one, 
 | `0x0503` | download | u16 record id → 32 KiB data chunks + `len=0` terminator (§3.4) |
 | `0x0403` | per-record probe | u16 id → `f8ff`; appears while Viidure browses the list — probably "does a thumbnail exist?" |
 
-Full decode with byte dumps: `../../docs/recon/pcap_11oct_analysis.txt`; the settings param map: `../../docs/recon/camera_menu.xml`.
+The settings param map is in [camera_menu.xml](camera_menu.xml). The raw packet captures are not published.
 
 ### 3.3 File records
 

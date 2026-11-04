@@ -15,7 +15,7 @@ Android app (Kotlin + Jetpack Compose, MVVM) replacing the ad-heavy Viidure app 
   - Modes are global: downloads and live preview conflict — whichever enters its mode last wins.
   - Record ids are NOT unique (photo+video pairs share one; that's why `0x0603` exists). Key records by `(id << 8) | kind` (`CameraFile.uniqueId`), and even that can collide — add list position for UI keys.
   - type=3 RX frames: 14 bytes, fixed 2-byte arg, no len field (`f8ff`/`feff` errors)
-  - Full decode + param map: `../docs/recon/pcap_11oct_analysis.txt`, `../docs/recon/camera_menu.xml`
+  - Settings param map: `docs/camera_menu.xml`. The raw packet captures are not published.
 - **TCP 8080 — RTSP**: `rtsp://192.168.100.1:8080/?action=stream`, no auth. Video MJPEG (RTP payload type 26) over UDP + L16 audio track.
   - Camera only pushes media after GPSOCKET mode `0x01` (`enterPreviewMode()`); Viidure's pcaps show PLAY→200 OK but zero media without it.
   - `media3-exoplayer-rtsp` CANNOT play this stream (`Unsupported static paylod type 26`) — use `RtspMjpegClient` (own RTSP session + RFC 2435 depacketizer + BitmapFactory). VLC works.
