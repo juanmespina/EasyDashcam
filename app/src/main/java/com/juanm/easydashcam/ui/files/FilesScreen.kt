@@ -36,14 +36,14 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.FilterAlt
-import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Sync
@@ -1224,7 +1224,7 @@ private fun PlayerDialog(
                     ) {
                         IconButton(onClick = { controls.skip(-skip) }) {
                             Icon(
-                                Icons.Default.Replay10,
+                                Icons.Default.FastRewind,
                                 contentDescription = stringResource(R.string.back_1s),
                                 tint = Color.White
                             )
@@ -1240,7 +1240,7 @@ private fun PlayerDialog(
                         }
                         IconButton(onClick = { controls.skip(skip) }) {
                             Icon(
-                                Icons.Default.Forward10,
+                                Icons.Default.FastForward,
                                 contentDescription = stringResource(R.string.forward_1s),
                                 tint = Color.White
                             )
