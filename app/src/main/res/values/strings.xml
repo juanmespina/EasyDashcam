@@ -94,7 +94,8 @@
     <string name="streaming_pct">Streaming — %1$.0f%%</string>
     <string name="player_position">%1$.1f / %2$.1f s</string>
     <string name="err_file_unavailable">file unavailable</string>
-    <string name="err_camera_refused">camera refused — it may still be recording</string>
+    <string name="err_camera_refused">camera refused this file</string>
+    <string name="err_camera_refused_recent">camera refused — it may still be recording</string>
     <string name="err_transfer_stopped">transfer stopped early</string>
     <string name="err_no_video_frames">no video frames</string>
 
@@ -146,7 +147,8 @@
     <string name="dl_err_no_dest">no destination</string>
     <string name="dl_err_cancelled">cancelled</string>
     <string name="dl_err_not_connected">not connected to the camera</string>
-    <string name="dl_err_refused">camera refused (still recording?)</string>
+    <string name="dl_err_refused">camera refused this file</string>
+    <string name="dl_err_refused_recent">camera refused (still recording?)</string>
     <string name="dl_err_stalled">stalled at %1$d/%2$d B</string>
 
     <!-- ViewModel notices -->

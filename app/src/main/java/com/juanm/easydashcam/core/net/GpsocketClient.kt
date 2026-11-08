@@ -9,6 +9,7 @@ import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.SecureRandom
+import java.time.Duration
 import java.time.LocalDateTime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -524,7 +525,16 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
         /** Record ids are NOT unique (photo+video pairs share one). The kind
          *  byte disambiguates — same reason the protocol has 0x0603. */
         val uniqueId: Int get() = (id shl 8) or kind
+
+        /** The camera feff-refuses records it is still writing, so only a
+         *  record stamped within the last few minutes can be one. */
+        fun maybeStillRecording(now: LocalDateTime = LocalDateTime.now()): Boolean =
+            timestamp?.let { Duration.between(it, now).abs().toMinutes() < STILL_RECORDING_MINUTES } == true
         override fun toString(): String = "%c id=0x%04x %s size=%dKiB".format(kindChar, id, timestamp ?: "?", size)
+
+        private companion object {
+            const val STILL_RECORDING_MINUTES = 3L
+        }
     }
 
     sealed class DownloadResult {

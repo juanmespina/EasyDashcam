@@ -308,8 +308,13 @@ class DownloadService : Service() {
                 finishFile(f.uniqueId)
             }
             is GpsocketClient.DownloadResult.Refused ->
-                // feff most often means the camera is still writing this record
-                failFile(dest, f.uniqueId, getString(R.string.dl_err_refused))
+                failFile(
+                    dest,
+                    f.uniqueId,
+                    getString(
+                        if (f.maybeStillRecording()) R.string.dl_err_refused_recent else R.string.dl_err_refused
+                    )
+                )
             is GpsocketClient.DownloadResult.Incomplete -> {
                 // Retry needs a clean row — the partial MediaStore entry is
                 // dropped before the next attempt re-opens it.

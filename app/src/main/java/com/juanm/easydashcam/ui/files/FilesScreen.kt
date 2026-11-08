@@ -36,14 +36,14 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.FilterAlt
-import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Sync
@@ -693,9 +693,7 @@ private fun fileDetail(
 ): String {
     // The camera feff-refuses records it is still writing — flag rows that
     // fresh so a refusal doesn't look like a broken download.
-    val stillRecording = file.timestamp?.let {
-        kotlin.math.abs(java.time.Duration.between(it, java.time.LocalDateTime.now()).toMinutes()) < 3
-    } == true
+    val stillRecording = file.maybeStillRecording()
     return buildString {
         append(stringResource(R.string.detail_base, kindLabel(file), file.size / 1024f))
         durationSec?.let {
@@ -1116,7 +1114,7 @@ private fun PlayerDialog(
     val error = if (playback == null) {
         stringResource(R.string.err_file_unavailable)
     } else {
-        st.failure?.let { failureText(it) }
+        st.failure?.let { failureText(it, remote) }
     }
     val frame = st.frame
     val pos = st.pos
@@ -1224,7 +1222,7 @@ private fun PlayerDialog(
                     ) {
                         IconButton(onClick = { controls.skip(-skip) }) {
                             Icon(
-                                Icons.Default.Replay10,
+                                Icons.Default.FastRewind,
                                 contentDescription = stringResource(R.string.back_1s),
                                 tint = Color.White
                             )
@@ -1240,7 +1238,7 @@ private fun PlayerDialog(
                         }
                         IconButton(onClick = { controls.skip(skip) }) {
                             Icon(
-                                Icons.Default.Forward10,
+                                Icons.Default.FastForward,
                                 contentDescription = stringResource(R.string.forward_1s),
                                 tint = Color.White
                             )
@@ -1263,11 +1261,17 @@ private fun PlayerDialog(
 }
 
 @Composable
-private fun failureText(failure: ClipPlayback.Failure): String = when (failure) {
+private fun failureText(failure: ClipPlayback.Failure, clip: GpsocketClient.CameraFile?): String = when (failure) {
     is ClipPlayback.Failure.Crash -> failure.message
     ClipPlayback.Failure.NoFrames -> stringResource(R.string.err_no_video_frames)
     is ClipPlayback.Failure.Transfer -> when (val r = failure.result) {
-        is GpsocketClient.DownloadResult.Refused -> stringResource(R.string.err_camera_refused)
+        is GpsocketClient.DownloadResult.Refused -> stringResource(
+            if (clip?.maybeStillRecording() == true) {
+                R.string.err_camera_refused_recent
+            } else {
+                R.string.err_camera_refused
+            }
+        )
         is GpsocketClient.DownloadResult.Incomplete -> stringResource(R.string.err_transfer_stopped)
         is GpsocketClient.DownloadResult.Failed -> r.reason
         is GpsocketClient.DownloadResult.NotConnected -> stringResource(R.string.dl_err_not_connected)
