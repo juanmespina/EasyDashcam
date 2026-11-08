@@ -488,9 +488,13 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
                 // A resend after the camera already answered can queue a
                 // second copy of the page — skip it or records duplicate.
                 if (recs.first().id == lastPageHead) continue
-                if (recs.first() in seen) break
-                files += recs
-                seen += recs
+                // The camera serves the list circularly, so a record already
+                // seen means the page wrapped: keep its new records and stop.
+                // A late stale copy of an older page also ends the list here
+                // (accepted risk, rarer than the wrap).
+                val fresh = recs.filter { seen.add(it) }
+                files += fresh
+                if (fresh.size < recs.size) break
                 retries = 0
                 p++
                 if (recs.size < FILE_PAGE_SIZE) break
