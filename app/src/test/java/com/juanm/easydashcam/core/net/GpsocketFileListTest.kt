@@ -68,6 +68,50 @@ class GpsocketFileListTest {
         assertEquals(all, listed)
     }
 
+    /** Serves a sliding 16-record window over [all] that wraps past the end,
+     *  so the page after the last full one mixes new and already-seen records. */
+    private fun serveWrappingWindows(all: List<CameraFile>) {
+        var offset = 0
+        val default = camera.onCommand
+        camera.onCommand = { cmd, body ->
+            if (cmd == GpsocketClient.CMD_FILE_LIST) {
+                val window = List(GpsocketClient.FILE_PAGE_SIZE) { all[(offset + it) % all.size] }
+                camera.reply(cmd, page(window))
+                offset += GpsocketClient.FILE_PAGE_SIZE
+            } else {
+                default(cmd, body)
+            }
+        }
+    }
+
+    /** Serves [all] once, with a short final page and nothing after it. */
+    private fun serveLinear(all: List<CameraFile>) {
+        val pages = all.chunked(GpsocketClient.FILE_PAGE_SIZE)
+        var next = 0
+        val default = camera.onCommand
+        camera.onCommand = { cmd, body ->
+            if (cmd == GpsocketClient.CMD_FILE_LIST) {
+                camera.reply(cmd, page(pages[next++]))
+            } else {
+                default(cmd, body)
+            }
+        }
+    }
+
+    @Test
+    fun `list that wraps mid-page is returned once`() = runBlocking {
+        val all = records(GpsocketClient.FILE_PAGE_SIZE + 4)
+        serveWrappingWindows(all)
+        assertEquals(all, client.listFiles())
+    }
+
+    @Test
+    fun `list ending in a short page is returned once`() = runBlocking {
+        val all = records(GpsocketClient.FILE_PAGE_SIZE + 4)
+        serveLinear(all)
+        assertEquals(all, client.listFiles())
+    }
+
     private companion object {
         val STAMP: LocalDateTime = LocalDateTime.of(2024, 11, 1, 10, 0, 0)
     }
