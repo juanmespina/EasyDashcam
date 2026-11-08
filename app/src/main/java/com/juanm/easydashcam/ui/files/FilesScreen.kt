@@ -693,9 +693,7 @@ private fun fileDetail(
 ): String {
     // The camera feff-refuses records it is still writing — flag rows that
     // fresh so a refusal doesn't look like a broken download.
-    val stillRecording = file.timestamp?.let {
-        kotlin.math.abs(java.time.Duration.between(it, java.time.LocalDateTime.now()).toMinutes()) < 3
-    } == true
+    val stillRecording = file.maybeStillRecording()
     return buildString {
         append(stringResource(R.string.detail_base, kindLabel(file), file.size / 1024f))
         durationSec?.let {
@@ -1116,7 +1114,7 @@ private fun PlayerDialog(
     val error = if (playback == null) {
         stringResource(R.string.err_file_unavailable)
     } else {
-        st.failure?.let { failureText(it) }
+        st.failure?.let { failureText(it, remote) }
     }
     val frame = st.frame
     val pos = st.pos
@@ -1263,11 +1261,17 @@ private fun PlayerDialog(
 }
 
 @Composable
-private fun failureText(failure: ClipPlayback.Failure): String = when (failure) {
+private fun failureText(failure: ClipPlayback.Failure, clip: GpsocketClient.CameraFile?): String = when (failure) {
     is ClipPlayback.Failure.Crash -> failure.message
     ClipPlayback.Failure.NoFrames -> stringResource(R.string.err_no_video_frames)
     is ClipPlayback.Failure.Transfer -> when (val r = failure.result) {
-        is GpsocketClient.DownloadResult.Refused -> stringResource(R.string.err_camera_refused)
+        is GpsocketClient.DownloadResult.Refused -> stringResource(
+            if (clip?.maybeStillRecording() == true) {
+                R.string.err_camera_refused_recent
+            } else {
+                R.string.err_camera_refused
+            }
+        )
         is GpsocketClient.DownloadResult.Incomplete -> stringResource(R.string.err_transfer_stopped)
         is GpsocketClient.DownloadResult.Failed -> r.reason
         is GpsocketClient.DownloadResult.NotConnected -> stringResource(R.string.dl_err_not_connected)
