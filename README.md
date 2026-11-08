@@ -14,6 +14,8 @@ Easy Dashcam is an alternative to the Viidure workflow, focused on local access 
 
 ## Screenshots
 
+<img src="docs/screenshots/demo.gif" alt="Live view, file browsing, a download with playback, and camera settings" width="300">
+
 | Live view | Files | Settings |
 |-----------|-------|----------|
 | ![Live view](docs/screenshots/live.png) | ![Files](docs/screenshots/files.png) | ![Settings](docs/screenshots/settings.png) |
