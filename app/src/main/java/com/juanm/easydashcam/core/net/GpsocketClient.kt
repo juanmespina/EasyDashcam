@@ -449,7 +449,9 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
     /**
      * Page through the file list. Each 0x0303 page starts with 0x10 and carries
      * up to [FILE_PAGE_SIZE] 13-byte records; the camera expects the last
-     * record's id echoed back as 0x00+id u16 to continue. Ends on a short page.
+     * record's id echoed back as 0x00+id u16 to continue. Ends on a short page, or
+     * when the camera wraps: some firmware serves a circular list and starts
+     * over at the first page instead of ever sending a short one.
      */
     suspend fun listFiles(maxPages: Int = 64, timeoutMs: Long = 2000): List<CameraFile> = requestLock.withLock {
         val ch = kotlinx.coroutines.channels.Channel<Frame>(maxPages + 8)
@@ -459,6 +461,7 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
         try {
             enterMode(MODE_FILE_LIST)
             val files = ArrayList<CameraFile>()
+            val seen = HashSet<CameraFile>()
             // The camera drops a request now and then — resend the same
             // start/resume a couple of times instead of discarding the
             // whole list over one lost frame.
@@ -485,7 +488,13 @@ class GpsocketClient(private val host: String = CAMERA_HOST, private val port: I
                 // A resend after the camera already answered can queue a
                 // second copy of the page — skip it or records duplicate.
                 if (recs.first().id == lastPageHead) continue
-                files += recs
+                // The camera serves the list circularly, so a record already
+                // seen means the page wrapped: keep its new records and stop.
+                // A late stale copy of an older page also ends the list here
+                // (accepted risk, rarer than the wrap).
+                val fresh = recs.filter { seen.add(it) }
+                files += fresh
+                if (fresh.size < recs.size) break
                 retries = 0
                 p++
                 if (recs.size < FILE_PAGE_SIZE) break
