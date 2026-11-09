@@ -1,6 +1,8 @@
 # Easy Dashcam
 
-Easy Dashcam is a local-only Android companion app for compatible Wi-Fi dashcams normally used with Viidure. It connects your phone directly to the camera so you can watch the live feed, browse recordings and photos, save media to your phone, and change camera settings.
+Easy Dashcam is a local-only Android app built for one Wi-Fi dashcam normally used with Viidure: the device reporting `1084-w90-WIFI-7789`, with firmware `20250306 V1.0`. On this camera, it lets you watch the live feed, browse recordings and photos, save media to your phone, and change camera settings without an account, ads, or a cloud connection.
+
+**Support for more cameras is a goal, not a guarantee.** This is the only camera used to develop and test the app. Another unit with the same identifier and firmware is expected to work if its protocol and behavior match, but has not been verified. Other cameras—including those used with Viidure—need testing. [Compatibility reports](https://github.com/juanmespina/EasyDashcam/issues/new?template=camera-compatibility.yml) and contributions help expand support.
 
 This app requires a separate, compatible dashcam; it does not turn your phone into one. It runs on Android 8.0 or later (API 26).
 
@@ -88,9 +90,29 @@ Camera communication stays on the local network. The app does not require an acc
 
 ## Compatibility and limitations
 
-- Tested with a camera whose Settings > Version screen shows `1084-w90-WIFI-7789` and firmware `20250306 V1.0`.
-- The implementation targets the reverse-engineered GPSOCKET camera protocol described below. Compatibility with every camera supported by Viidure is not guaranteed.
-- Your camera is likely compatible if it works with Viidure, its Wi-Fi network is named like `wifi-camera_xxxxxxxx`, and it uses the address `192.168.100.1`. If yours works or does not, please open an issue with its model.
+### Camera used for development
+
+| Detail | Tested camera |
+|--------|---------------|
+| Identifier shown in Settings > Version | `1084-w90-WIFI-7789` |
+| Firmware | `20250306 V1.0` |
+| Connection | Camera-hosted Wi-Fi hotspot, normally at `192.168.100.1`; no internet required |
+| Control and file transfers | GPSOCKET over TCP port `8081` |
+| Live feed | RTSP on TCP port `8080`, with MJPEG video and L16 audio over UDP |
+| Saved recordings | MJPEG video in AVI files |
+
+The identifier above is what the camera reports, not a confirmed retail brand or model name. Live view, downloads, playback, and settings changes have been tested on this camera.
+
+Another unit reporting the same identifier and firmware is expected to work if it uses the same protocol and behavior, but only our development unit has been verified. A matching name or appearance alone does not establish compatibility; firmware or hardware differences may matter.
+
+### Other cameras
+
+We want to add support for more cameras where possible. A camera that works with Viidure, has a Wi-Fi network named like `wifi-camera_xxxxxxxx`, and uses `192.168.100.1` is a candidate for testing—not confirmed compatible. The app currently targets the GPSOCKET and RTSP behavior described here; using Viidure alone is not enough.
+
+Please [open a compatibility report](https://github.com/juanmespina/EasyDashcam/issues/new?template=camera-compatibility.yml) whether your camera works or fails. Include its retail model if known, the identifier and firmware shown in Settings > Version, and which features you tested.
+
+### Behavior and limitations of the tested camera
+
 - Live preview and downloads use different camera modes and cannot operate independently at the same time. A download can interrupt the live feed.
 - Locked event clips are hidden because the target camera refuses to transfer them.
 - A recording that the camera is still writing may not be available for download yet; try an older clip or retry later.
